@@ -198,7 +198,10 @@ void create_setup_impl() {
   papprox = NULL;
   while (acadp_get_approx(&papprox)) {
     if (acadp_approx_get_default_st(papprox) == ST_ON) {
-      fprintf(fp, "\tthis->activateApprox(%d); // %s\n", approxid, acadp_approx_get_name(papprox));
+      fprintf(fp, "\tthis->activateApprox(%d, 0); // %s\n", approxid, acadp_approx_get_name(papprox));
+      fprintf(fp, "\tthis->activateApprox(%d, 1); // %s\n", approxid, acadp_approx_get_name(papprox));
+      fprintf(fp, "\tthis->activateApprox(%d, 2); // %s\n", approxid, acadp_approx_get_name(papprox));
+      fprintf(fp, "\tthis->activateApprox(%d, 3); // %s\n", approxid, acadp_approx_get_name(papprox));
     }
     approxid++;
   }
