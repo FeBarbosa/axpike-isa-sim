@@ -91,25 +91,25 @@ void create_setup_impl() {
       if (acadp_approx_get_pre_behavior(papprox, pinstr->id) != NULL || acadp_approx_get_post_behavior(papprox, pinstr->id) != NULL || acadp_approx_get_alt_behavior(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tIM[0x%XULL | prv].activateModel(%d, &Wrappers::Instruction::%s_%s);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_regbank_read(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_regbank_read(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tDM_rbnrd[0x%XULL | prv].activateModel(%d, &Wrappers::Data::%s_%s_rbnrd);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_regbank_write(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_regbank_write(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tDM_rbnwr[0x%XULL | prv].activateModel(%d, &Wrappers::Data::%s_%s_rbnwr);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_mem_read(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_mem_read(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tDM_memrd[0x%XULL | prv].activateModel(%d, &Wrappers::Data::%s_%s_memrd);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_mem_write(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_mem_write(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tDM_memwr[0x%XULL | prv].activateModel(%d, &Wrappers::Data::%s_%s_memwr);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_reg_read(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_reg_read(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tDM_regrd[0x%XULL | prv].activateModel(%d, &Wrappers::Data::%s_%s_regrd);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_reg_write(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_reg_write(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tDM_regwr[0x%XULL | prv].activateModel(%d, &Wrappers::Data::%s_%s_regwr);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
-      if (acadp_approx_get_energy(papprox, pinstr->id << 2) != NULL) {
+      if (acadp_approx_get_energy(papprox, pinstr->id) != NULL) {
         fprintf(fp, "\t\t\tEM[0x%XULL | prv].activateModel(%d, &Wrappers::Energy::%s_%s);\n", pinstr->id << 2, approxid, pinstr->name, acadp_approx_get_name(papprox));
       }
       op = acadp_approx_get_op(papprox, pinstr->id);
