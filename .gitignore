@@ -8,4 +8,5 @@ autom4te.cache/
 .gdb_history
 .#*
 *~
+*.csv
 adf_test/
