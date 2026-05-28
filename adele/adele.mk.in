@@ -41,7 +41,7 @@ insn_approx.list axpike_wrappers.cc axpike_wrappers.h axpike_setup.cc $(src_dir)
 	./acadp insn_list.h $(src_dir)/adele/adf/*.adf
 	cp axpike_iface.h ../adele/
 
-axpike_models.cc: $(src_dir)/adele/adf/*.cc
+axpike_models.cc: $(src_dir)/adele/adf/*.cc $(src_dir)/adele/adf/LowPrecisionSimulation/*.cc
 	@echo "" > axpike_models.cc
 	@for f in $^; do \
 		cat $$f >> axpike_models.cc; \
