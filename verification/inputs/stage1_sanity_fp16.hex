@@ -1,0 +1,10 @@
+# FP16 operand pairs, encoded as raw uint16_t hex values
+# Format: <a_bits> <b_bits>
+3c00 4000
+3e00 4080
+7bff 3c00
+0000 8000
+0001 0001
+7c00 3c00
+7e00 3c00
+fe00 3c00
