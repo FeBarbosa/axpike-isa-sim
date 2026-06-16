@@ -62,6 +62,11 @@ Generated binaries and run artifacts:
 - `file_driver_report.md`
 - `stage3_full/`, the completed exhaustive FP16 sweep artifacts
 
+Generated `.csv` files and `verification/out/` binaries/logs are intentionally
+ignored by the repository. Keep reproducible source files, input vectors, and
+summary Markdown reports under version control; regenerate large or transient
+outputs locally.
+
 ### `scripts/`
 
 Runner scripts for larger validation stages:
@@ -124,6 +129,12 @@ format=e4m3 total=46 mismatches=0
 ### `verification_plan.md`
 
 The current prompt/plan used to guide the verification work.
+
+### `../LOW_PRECISION_CONVERSION_TRACE_PROMPT.md`
+
+The prompt used to define the AxPIKE low-precision conversion trace facility.
+It records the trace requirements, environment variables, expected log columns,
+and suggested LeNet probe commands.
 
 ## Current Build Setup
 
@@ -291,6 +302,8 @@ in `out/stage3_report.md`.
 ## Next Step
 
 The standalone FlexFloat-vs-SoftFloat FP16 comparison is now complete for the
-basic arithmetic operations. The next step is to reuse the same input and
-classification strategy against the AxPIKE lowprecision FP16 hook, so the
-standalone behavior can be compared with the simulator-integrated behavior.
+basic arithmetic operations, and the hook-only FP32/FP64 tests validate the
+conversion helpers used by the AxPIKE lowprecision hooks. The remaining step is
+to run equivalent tests through the full AxPIKE simulator path, with real
+approximation activation and instruction execution, so the standalone and
+hook-only behavior can be compared with the simulator-integrated behavior.
