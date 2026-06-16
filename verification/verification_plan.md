@@ -73,12 +73,15 @@ Test harness requirements:
 
 Suggested project structure:
 - `softfloat/` for the golden reference implementation.
-- `fp16_softfloat_ref.cpp` for a small directed reference program.
-- `fp16_flexfloat_ref.cpp` for a small directed FlexFloat comparison program.
-- `fp16_exhaustive_validate.cpp` for the full exhaustive harness.
-- `reports/` or a user-configurable output directory for logs and summaries.
+- `verification/src/fp16_softfloat_flexfloat_compare.cpp` for the reusable file-driven
+  comparison harness.
+- `verification/src/fp16_pair_input_generator.cpp` for deterministic input
+  generation and chunking.
+- `verification/scripts/run_fp16_exhaustive_compare.py` for resumable exhaustive orchestration.
+- `verification/out/` or a user-configurable output directory for logs and
+  summaries.
 
-Verification stages:
+Verification passes:
 1. Sanity cases
    - Test a few hand-picked values such as `1 + 2`, `1.5 + 2.25`, and `65504 + 1`.
 2. Sampled sweep

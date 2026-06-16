@@ -12,7 +12,8 @@ The current focus is outside AxPIKE:
 
 - SoftFloat is the golden reference.
 - FlexFloat is the implementation under test.
-- The comparison is done in small directed tests and in a file-driven harness.
+- The comparison is done with a reusable file-driven harness and chunked
+  exhaustive runs.
 
 ## What Exists Here
 
@@ -20,22 +21,20 @@ The current focus is outside AxPIKE:
 
 Source files for the verification work:
 
-- `fp16_softfloat_ref.cpp`
-- `fp16_flexfloat_ref.cpp`
-- `fp16_file_compare.cpp`
-- `fp16_input_generator.cpp`
-- `fp16_lowprecision_hook_test.cpp`
-- `fp64_lowprecision_fp16_hook_test.cpp`
-- `fp64_lowprecision_flexfloat_hook_test.cpp`
-- `fp32_add_axpike.c`
+- `fp16_softfloat_flexfloat_compare.cpp`
+- `fp16_pair_input_generator.cpp`
+- `lowprecision_fp16_fp32_hook_compare.cpp`
+- `lowprecision_fp16_fp64_hook_compare.cpp`
+- `lowprecision_flexfloat_fp64_hook_compare.cpp`
 
 ### `inputs/`
 
 Test-vector files for the file-driven harness:
 
-- `stage1_sanity_fp16.hex`
-- `hook_only_fp32.hex`
-- `hook_only_fp64.hex`
+- `fp16_sanity_pairs.hex`
+- `fp16_sample_pairs.hex`
+- `lowprecision_fp32_values.hex`
+- `lowprecision_fp64_values.hex`
 
 The FP16 pair files contain two FP16 values per non-comment line:
 
@@ -45,22 +44,21 @@ The FP16 pair files contain two FP16 values per non-comment line:
 ```
 
 The hook-only files contain one raw floating-point value per non-comment line:
-`hook_only_fp32.hex` uses 8 hex digits and `hook_only_fp64.hex` uses 16 hex
+`lowprecision_fp32_values.hex` uses 8 hex digits and `lowprecision_fp64_values.hex` uses 16 hex
 digits.
+
+### `reports/`
+
+Summary reports kept under version control:
+
+- `fp16_exhaustive_softfloat_flexfloat.md`
 
 ### `out/`
 
 Generated binaries and run artifacts:
 
-- `fp16_softfloat_ref`
-- `fp16_flexfloat_ref`
-- `fp16_file_compare`
-- `fp32_add.riscv`
-- `stage1_report.md`
-- `stage2_report.md`
-- `stage3_report.md`
-- `file_driver_report.md`
-- `stage3_full/`, the completed exhaustive FP16 sweep artifacts
+- `fp16_softfloat_flexfloat_compare`
+- `fp16_exhaustive/`, the completed exhaustive FP16 sweep artifacts
 
 Generated `.csv` files and `verification/out/` binaries/logs are intentionally
 ignored by the repository. Keep reproducible source files, input vectors, and
@@ -71,11 +69,11 @@ outputs locally.
 
 Runner scripts for larger validation stages:
 
-- `run_stage3.py`
+- `run_fp16_exhaustive_compare.py`
 
 ## Hook-Only FP16 Lowprecision Test
 
-The hook-only test is `src/fp16_lowprecision_hook_test.cpp`.
+The hook-only test is `src/lowprecision_fp16_fp32_hook_compare.cpp`.
 
 It exercises the same FP16 conversion path used by
 `adele/adf/LowPrecisionFP16.cc`, but without running AxPIKE itself:
@@ -85,7 +83,7 @@ It exercises the same FP16 conversion path used by
 3. Convert it with `typeSimulationSoftFloatFP16(value)` from the ADF helper.
 4. Compare the two FP32 bit patterns.
 
-The sample input file is `inputs/hook_only_fp32.hex`.
+The sample input file is `inputs/lowprecision_fp32_values.hex`.
 
 Current observed result:
 
@@ -93,11 +91,11 @@ Current observed result:
 - the helper now matches the SoftFloat round-trip on the sample set with no
   mismatches
 
-The FP64 hook-only test is `src/fp64_lowprecision_fp16_hook_test.cpp`.
+The FP64 hook-only test is `src/lowprecision_fp16_fp64_hook_compare.cpp`.
 
 It validates the FP64 overload used by the FP64 LowPrecision FP16 hook:
 
-1. Read a raw FP64 bit pattern from `inputs/hook_only_fp64.hex`.
+1. Read a raw FP64 bit pattern from `inputs/lowprecision_fp64_values.hex`.
 2. Convert it with SoftFloat using `FP64 -> FP16 -> FP64`.
 3. Convert it with `typeSimulationSoftFloatFP16(uint64_t)`.
 4. Compare the resulting FP64 bit patterns and SoftFloat exception flags.
@@ -109,11 +107,11 @@ total=46 mismatches=0
 ```
 
 The FlexFloat-backed FP64 hook-only test is
-`src/fp64_lowprecision_flexfloat_hook_test.cpp`.
+`src/lowprecision_flexfloat_fp64_hook_compare.cpp`.
 
 It validates the FP64 helper used by BF16, E5M2, and E4M3:
 
-1. Read a raw FP64 bit pattern from `inputs/hook_only_fp64.hex`.
+1. Read a raw FP64 bit pattern from `inputs/lowprecision_fp64_values.hex`.
 2. Convert it with a direct local `flexfloat<E, M>` model.
 3. Convert it with `typeSimulationFF64(E, M, value)`.
 4. Compare the resulting FP64 bit patterns.
@@ -149,29 +147,9 @@ For the standalone verification, the important part is the direct library usage:
 - SoftFloat is compiled from the repository’s `softfloat/` sources.
 - FlexFloat is used through the installed C++ wrapper `flexfloat.hpp`.
 
-## Directed Reference Programs
-
-Two small programs were created first:
-
-- `fp16_softfloat_ref.cpp`
-- `fp16_flexfloat_ref.cpp`
-
-They were used to compare a few hand-picked FP16 additions such as:
-
-- `1 + 2`
-- `1.5 + 2.25`
-- `65504 + 1`
-- `0 + -0`
-- `subnormal + subnormal`
-- `inf + 1`
-- `nan + 1`
-
-These runs showed matching results for the normal cases and one NaN-sign
-classification difference on a negative-NaN input.
-
 ## File-Driven Harness
 
-The main reusable harness is `fp16_file_compare.cpp`.
+The main reusable harness is `fp16_softfloat_flexfloat_compare.cpp`.
 
 What it does:
 
@@ -190,9 +168,9 @@ Example input file:
 7e00 3c00
 ```
 
-## Stage 1 Result
+## Sanity Pair Result
 
-The Stage 1 sanity file is `inputs/stage1_sanity_fp16.hex`.
+The sanity pair file is `inputs/fp16_sanity_pairs.hex`.
 
 Results from the file-driven harness:
 
@@ -208,12 +186,26 @@ The only observed mismatch was a NaN-sign case:
 - FlexFloat result: `0xfe00`
 - SoftFloat flags: `invalid`
 
-This is the first mismatch category to carry forward into later comparison
-logic.
+This mismatch category is carried forward into the broader comparison logic.
+
+## Representative Sample Result
+
+The representative sample file is `inputs/fp16_sample_pairs.hex`.
+
+Results from the file-driven harness:
+
+- `add`: 48 cases, 0 mismatches
+- `sub`: 48 cases, 1 mismatch
+- `mul`: 48 cases, 0 mismatches
+- `div`: 48 cases, 4 mismatches
+
+All sampled mismatches are the same invalid-operation NaN-sign difference seen
+in the sanity pairs: SoftFloat returns `0x7e00`, FlexFloat returns `0xfe00`, and
+SoftFloat raises `invalid`.
 
 ## Input Generator
 
-The stage-3 input generator is `fp16_input_generator.cpp`.
+The exhaustive input generator is `fp16_pair_input_generator.cpp`.
 
 What it does:
 
@@ -226,9 +218,9 @@ What it does:
 This makes it practical to split the exhaustive sweep into smaller chunks before
 running the full `65,536 x 65,536` space.
 
-## Stage 3 Runner
+## Exhaustive Runner
 
-The chunked exhaustive orchestration script is `scripts/run_stage3.py`.
+The chunked exhaustive orchestration script is `scripts/run_fp16_exhaustive_compare.py`.
 
 It follows the current chunk schedule:
 
@@ -238,8 +230,8 @@ It follows the current chunk schedule:
 
 For each chunk and each operation, the script:
 
-1. Generates the chunk file with `fp16_input_generator`.
-2. Runs `fp16_file_compare` on that file.
+1. Generates the chunk file with `fp16_pair_input_generator`.
+2. Runs `fp16_softfloat_flexfloat_compare` on that file.
 3. Records per-chunk logs and summaries.
 4. Marks completed chunk files so reruns can skip them.
 
@@ -248,12 +240,12 @@ This is the structure used for the full exhaustive verification run.
 The full-run command pattern is:
 
 ```bash
-python3 verification/scripts/run_stage3.py \
+python3 verification/scripts/run_fp16_exhaustive_compare.py \
   --ops add,sub,mul,div \
   --a-block-size 0100 \
   --b-start 0000 \
   --b-end ffff \
-  --out-dir verification/out/stage3_full \
+  --out-dir verification/out/fp16_exhaustive \
   --delete-inputs \
   --max-workers 4
 ```
@@ -271,7 +263,7 @@ Resume behavior:
 This was needed because an interrupted run left partial `.hex` files and empty
 `.done` markers. The runner now repairs those cases during resume.
 
-## Full Exhaustive Stage 3 Result
+## Full Exhaustive Result
 
 The exhaustive FlexFloat-vs-SoftFloat FP16 verification is complete for all
 `uint16_t` operand pairs of `add`, `sub`, `mul`, and `div`.
@@ -288,16 +280,15 @@ invalid-operation NaN results where SoftFloat returns `0x7e00` and FlexFloat
 returns `0xfe00`; no finite-result mismatch was observed.
 
 Detailed scope, artifact paths, mismatch logs, and interpretation are recorded
-in `out/stage3_report.md`.
+in `reports/fp16_exhaustive_softfloat_flexfloat.md`.
 
 ## How The Pieces Fit Together
 
 - `verification_plan.md` defines the intended validation strategy.
-- `src/fp16_softfloat_ref.cpp` and `src/fp16_flexfloat_ref.cpp` provide small
-  directed comparisons.
-- `src/fp16_file_compare.cpp` provides the reusable file-driven harness.
-- `inputs/stage1_sanity_fp16.hex` provides a reproducible input set.
-- `out/` stores the binaries and reports produced so far.
+- `src/fp16_softfloat_flexfloat_compare.cpp` provides the reusable file-driven harness.
+- `inputs/fp16_sanity_pairs.hex` provides a reproducible input set.
+- `reports/` stores committed result summaries.
+- `out/` stores ignored generated binaries and run artifacts.
 
 ## Next Step
 

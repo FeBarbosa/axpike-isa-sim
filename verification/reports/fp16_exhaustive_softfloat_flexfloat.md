@@ -1,4 +1,4 @@
-# Stage 3 Exhaustive FP16 Sweep Report
+# Exhaustive FP16 SoftFloat vs FlexFloat Report
 
 This report records the completed exhaustive standalone comparison between
 SoftFloat FP16 and FlexFloat FP16 for the basic arithmetic operations.
@@ -21,12 +21,12 @@ SoftFloat FP16 and FlexFloat FP16 for the basic arithmetic operations.
 ## Command
 
 ```bash
-python3 verification/scripts/run_stage3.py \
+python3 verification/scripts/run_fp16_exhaustive_compare.py \
   --ops add,sub,mul,div \
   --a-block-size 0100 \
   --b-start 0000 \
   --b-end ffff \
-  --out-dir verification/out/stage3_full \
+  --out-dir verification/out/fp16_exhaustive \
   --delete-inputs \
   --max-workers 4
 ```
@@ -37,26 +37,26 @@ have a valid `.done` marker.
 
 ## Artifacts
 
-- Execution log: `verification/out/stage3_full/execution.log`
-- Progress JSON: `verification/out/stage3_full/progress.json`
+- Execution log: `verification/out/fp16_exhaustive/execution.log`
+- Progress JSON: `verification/out/fp16_exhaustive/progress.json`
 - Per-operation summaries:
-  - `verification/out/stage3_full/summaries/add.txt`
-  - `verification/out/stage3_full/summaries/sub.txt`
-  - `verification/out/stage3_full/summaries/mul.txt`
-  - `verification/out/stage3_full/summaries/div.txt`
+  - `verification/out/fp16_exhaustive/summaries/add.txt`
+  - `verification/out/fp16_exhaustive/summaries/sub.txt`
+  - `verification/out/fp16_exhaustive/summaries/mul.txt`
+  - `verification/out/fp16_exhaustive/summaries/div.txt`
 - Mismatch logs:
-  - `verification/out/stage3_full/logs/add_a7c00_a7cff.log`
-  - `verification/out/stage3_full/logs/add_afc00_afcff.log`
-  - `verification/out/stage3_full/logs/sub_a7c00_a7cff.log`
-  - `verification/out/stage3_full/logs/sub_afc00_afcff.log`
-  - `verification/out/stage3_full/logs/mul_a0000_a00ff.log`
-  - `verification/out/stage3_full/logs/mul_a7c00_a7cff.log`
-  - `verification/out/stage3_full/logs/mul_a8000_a80ff.log`
-  - `verification/out/stage3_full/logs/mul_afc00_afcff.log`
-  - `verification/out/stage3_full/logs/div_a0000_a00ff.log`
-  - `verification/out/stage3_full/logs/div_a7c00_a7cff.log`
-  - `verification/out/stage3_full/logs/div_a8000_a80ff.log`
-  - `verification/out/stage3_full/logs/div_afc00_afcff.log`
+  - `verification/out/fp16_exhaustive/logs/add_a7c00_a7cff.log`
+  - `verification/out/fp16_exhaustive/logs/add_afc00_afcff.log`
+  - `verification/out/fp16_exhaustive/logs/sub_a7c00_a7cff.log`
+  - `verification/out/fp16_exhaustive/logs/sub_afc00_afcff.log`
+  - `verification/out/fp16_exhaustive/logs/mul_a0000_a00ff.log`
+  - `verification/out/fp16_exhaustive/logs/mul_a7c00_a7cff.log`
+  - `verification/out/fp16_exhaustive/logs/mul_a8000_a80ff.log`
+  - `verification/out/fp16_exhaustive/logs/mul_afc00_afcff.log`
+  - `verification/out/fp16_exhaustive/logs/div_a0000_a00ff.log`
+  - `verification/out/fp16_exhaustive/logs/div_a7c00_a7cff.log`
+  - `verification/out/fp16_exhaustive/logs/div_a8000_a80ff.log`
+  - `verification/out/fp16_exhaustive/logs/div_afc00_afcff.log`
 
 No generated `.hex` input files were left after the completed run because
 `--delete-inputs` was used.

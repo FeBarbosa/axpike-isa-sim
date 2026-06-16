@@ -12,11 +12,11 @@ from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-# Keep all generated stage-3 files under the verification tree so the run is
-# self-contained and easy to resume or inspect later.
-GEN = ROOT_DIR / "out" / "fp16_input_generator"
-CMP = ROOT_DIR / "out" / "fp16_file_compare"
-OUT_DIR = ROOT_DIR / "out" / "stage3"
+# Keep all generated exhaustive-run files under the verification tree so the
+# run is self-contained and easy to resume or inspect later.
+GEN = ROOT_DIR / "out" / "fp16_pair_input_generator"
+CMP = ROOT_DIR / "out" / "fp16_softfloat_flexfloat_compare"
+OUT_DIR = ROOT_DIR / "out" / "fp16_exhaustive"
 INPUT_DIR = OUT_DIR / "inputs"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_DIR = OUT_DIR / "summaries"
@@ -200,7 +200,7 @@ def save_progress(progress: dict) -> None:
 def main() -> int:
     global OUT_DIR, INPUT_DIR, LOG_DIR, SUMMARY_DIR, EXECUTION_LOG, PROGRESS_FILE
 
-    parser = argparse.ArgumentParser(description="Run the stage-3 FP16 exhaustive sweep in chunks.")
+    parser = argparse.ArgumentParser(description="Run the FP16 exhaustive sweep in chunks.")
     parser.add_argument("--ops", default="add,sub,mul,div", help="Comma-separated list of operations")
     parser.add_argument("--a-block-size", default="0100", help="Chunk size for A in hex, default 0100")
     parser.add_argument("--b-start", default="0000", help="B range start in hex")
