@@ -1,0 +1,60 @@
+# FP64 input values for lowprecision hook-only tests.
+# Each non-comment line is one raw IEEE-754 binary64 bit pattern in hex.
+#
+# Basic finite values
+0000000000000000  # +0
+8000000000000000  # -0
+3ff0000000000000  # +1.0
+bff0000000000000  # -1.0
+4000000000000000  # +2.0
+c000000000000000  # -2.0
+3fe0000000000000  # +0.5
+bfe0000000000000  # -0.5
+3ff8000000000000  # +1.5
+4002000000000000  # +2.25
+
+# FP16 exact and boundary values represented as FP64
+40effc0000000000  # +65504.0, max finite FP16
+c0effc0000000000  # -65504.0, min finite FP16
+40f0000000000000  # +65536.0, above max finite FP16
+c0f0000000000000  # -65536.0, below min finite FP16
+3f10000000000000  # +0.00006103515625, min normal FP16
+bf10000000000000  # -0.00006103515625, min normal FP16
+3e70000000000000  # +0.000000059604644775390625, min subnormal FP16
+be70000000000000  # -0.000000059604644775390625, min subnormal FP16
+3e60000000000000  # +0.0000000298023223876953125, half min subnormal FP16
+be60000000000000  # -0.0000000298023223876953125, half min subnormal FP16
+
+# BF16-relevant finite values
+7f70000000000000  # large finite below FP64 infinity, overflows BF16
+ff70000000000000  # negative large finite below FP64 infinity, overflows BF16
+3810000000000000  # small normal-ish value for BF16 underflow checks
+b810000000000000  # negative small normal-ish value for BF16 underflow checks
+
+# FP8-relevant values
+407c000000000000  # +448.0, typical E4M3 max finite
+c07c000000000000  # -448.0, typical E4M3 min finite
+407e000000000000  # +480.0, above typical E4M3 max finite
+c07e000000000000  # -480.0, below typical E4M3 min finite
+406e000000000000  # +240.0, typical E5M2 max finite neighborhood
+c06e000000000000  # -240.0, typical E5M2 min finite neighborhood
+3f80000000000000  # +0.0078125, small FP8-relevant finite
+bf80000000000000  # -0.0078125, small FP8-relevant finite
+
+# FP64 extrema and subnormals
+7fefffffffffffff  # max finite FP64
+ffefffffffffffff  # min finite FP64
+0010000000000000  # min normal positive FP64
+8010000000000000  # min normal negative FP64
+0000000000000001  # min subnormal positive FP64
+8000000000000001  # min subnormal negative FP64
+
+# Infinities and NaNs
+7ff0000000000000  # +inf
+fff0000000000000  # -inf
+7ff8000000000000  # positive quiet NaN
+fff8000000000000  # negative quiet NaN
+7ff0000000000001  # positive signaling NaN payload
+fff0000000000001  # negative signaling NaN payload
+7ff7ffffffffffff  # positive signaling NaN max payload
+fff7ffffffffffff  # negative signaling NaN max payload

@@ -13,6 +13,7 @@ adf_test/
 
 # Verification generated artifacts
 verification/out/fp16_*
+verification/out/fp64_*
 verification/out/fp32_add.riscv
 verification/out/stage3/
 verification/out/stage3_full/

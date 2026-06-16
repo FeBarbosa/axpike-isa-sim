@@ -25,6 +25,8 @@ Source files for the verification work:
 - `fp16_file_compare.cpp`
 - `fp16_input_generator.cpp`
 - `fp16_lowprecision_hook_test.cpp`
+- `fp64_lowprecision_fp16_hook_test.cpp`
+- `fp64_lowprecision_flexfloat_hook_test.cpp`
 - `fp32_add_axpike.c`
 
 ### `inputs/`
@@ -33,13 +35,18 @@ Test-vector files for the file-driven harness:
 
 - `stage1_sanity_fp16.hex`
 - `hook_only_fp32.hex`
+- `hook_only_fp64.hex`
 
-Each non-comment line contains two FP16 values encoded as raw hex:
+The FP16 pair files contain two FP16 values per non-comment line:
 
 ```text
 3c00 4000
 7e00 3c00
 ```
+
+The hook-only files contain one raw floating-point value per non-comment line:
+`hook_only_fp32.hex` uses 8 hex digits and `hook_only_fp64.hex` uses 16 hex
+digits.
 
 ### `out/`
 
@@ -80,6 +87,39 @@ Current observed result:
 - finite values match the SoftFloat round-trip
 - the helper now matches the SoftFloat round-trip on the sample set with no
   mismatches
+
+The FP64 hook-only test is `src/fp64_lowprecision_fp16_hook_test.cpp`.
+
+It validates the FP64 overload used by the FP64 LowPrecision FP16 hook:
+
+1. Read a raw FP64 bit pattern from `inputs/hook_only_fp64.hex`.
+2. Convert it with SoftFloat using `FP64 -> FP16 -> FP64`.
+3. Convert it with `typeSimulationSoftFloatFP16(uint64_t)`.
+4. Compare the resulting FP64 bit patterns and SoftFloat exception flags.
+
+Current observed result on the directed FP64 input file:
+
+```text
+total=46 mismatches=0
+```
+
+The FlexFloat-backed FP64 hook-only test is
+`src/fp64_lowprecision_flexfloat_hook_test.cpp`.
+
+It validates the FP64 helper used by BF16, E5M2, and E4M3:
+
+1. Read a raw FP64 bit pattern from `inputs/hook_only_fp64.hex`.
+2. Convert it with a direct local `flexfloat<E, M>` model.
+3. Convert it with `typeSimulationFF64(E, M, value)`.
+4. Compare the resulting FP64 bit patterns.
+
+Current observed result on the directed FP64 input file:
+
+```text
+format=bf16 total=46 mismatches=0
+format=e5m2 total=46 mismatches=0
+format=e4m3 total=46 mismatches=0
+```
 
 ### `verification_plan.md`
 
