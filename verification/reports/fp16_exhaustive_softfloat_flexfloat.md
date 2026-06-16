@@ -139,3 +139,11 @@ complete FP16 input space except for NaN sign/canonicalization in invalid
 operations. For strict bit-for-bit validation, those cases must either be
 reported explicitly, as done here, or normalized by a comparison policy that
 treats quiet NaNs with different signs as equivalent.
+
+This result is specific to the local FlexFloat build configuration. FlexFloat
+commit `ef82d2e8268ec338552d1f5b526d9fa509acd853` introduced the
+`NAN_NORMALIZATION` build flag after upstream issue #7 noted that tests should
+not assume host-specific NaN signs or payloads. Builds using
+`NAN_NORMALIZATION` may canonicalize invalid-operation NaNs differently, so the
+NaN-sign mismatch category should be rechecked if the local FlexFloat library is
+rebuilt with that option.

@@ -168,6 +168,18 @@ Example input file:
 7e00 3c00
 ```
 
+Useful FP16 bit-pattern meanings for reading the examples:
+
+- `0x0000`: positive zero, `+0`
+- `0x8000`: negative zero, `-0`
+- `0x3c00`: positive one, `+1.0`
+- `0x4000`: positive two, `+2.0`
+- `0x7bff`: largest positive finite FP16 value, `+65504`
+- `0x7c00`: positive infinity, `+inf`
+- `0xfc00`: negative infinity, `-inf`
+- `0x7e00`: positive quiet NaN, used by SoftFloat as the canonical invalid-operation NaN here
+- `0xfe00`: negative quiet NaN, the FlexFloat result observed in these invalid-operation cases
+
 ## Sanity Pair Result
 
 The sanity pair file is `inputs/fp16_sanity_pairs.hex`.
@@ -181,9 +193,10 @@ Results from the file-driven harness:
 
 The only observed mismatch was a NaN-sign case:
 
-- operands: `0x0000 / 0x8000`
-- SoftFloat result: `0x7e00`
-- FlexFloat result: `0xfe00`
+- operands: `0x0000 / 0x8000`, meaning `+0 / -0`
+- operation meaning: zero divided by zero is an invalid operation and produces a quiet NaN
+- SoftFloat result: `0x7e00`, positive quiet NaN
+- FlexFloat result: `0xfe00`, negative quiet NaN
 - SoftFloat flags: `invalid`
 
 This mismatch category is carried forward into the broader comparison logic.
@@ -200,8 +213,31 @@ Results from the file-driven harness:
 - `div`: 48 cases, 4 mismatches
 
 All sampled mismatches are the same invalid-operation NaN-sign difference seen
-in the sanity pairs: SoftFloat returns `0x7e00`, FlexFloat returns `0xfe00`, and
-SoftFloat raises `invalid`.
+in the sanity pairs: the operands produce a quiet NaN, SoftFloat returns the
+positive quiet NaN `0x7e00`, FlexFloat returns the negative quiet NaN `0xfe00`,
+and SoftFloat raises `invalid`.
+
+## FlexFloat NaN Normalization
+
+FlexFloat has upstream history around NaN bit-pattern assumptions. Issue #7
+reported that tests should not assume host-specific NaN signs or payloads, and
+commit `ef82d2e8268ec338552d1f5b526d9fa509acd853` introduced the
+`NAN_NORMALIZATION` build flag.
+
+With `NAN_NORMALIZATION`, FlexFloat canonicalizes NaN values to a positive quiet
+NaN with the quiet bit set and payload bits cleared. Without that build option,
+NaN sign and payload can depend on the host backend and operation path.
+
+The local verification was run against the installed FlexFloat build available
+in `~/.local`. In this setup, invalid-operation FP16 cases produced:
+
+- SoftFloat: `0x7e00`, positive quiet NaN
+- FlexFloat: `0xfe00`, negative quiet NaN
+
+Therefore, the observed mismatch is not a finite arithmetic mismatch. It is a
+NaN canonicalization/sign-policy difference. If FlexFloat is rebuilt with
+`NAN_NORMALIZATION`, the NaN-sign mismatch category should be rechecked because
+the expected FlexFloat NaN bit pattern may change.
 
 ## Input Generator
 
