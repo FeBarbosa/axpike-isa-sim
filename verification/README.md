@@ -79,16 +79,16 @@ It exercises the same FP16 conversion path used by
 `adele/adf/LowPrecisionFP16.cc`, but without running AxPIKE itself:
 
 1. Read a raw FP32 bit pattern from an input file.
-2. Convert it with SoftFloat using `FP32 -> FP16 -> FP32`.
-3. Convert it with `typeSimulationSoftFloatFP16(value)` from the ADF helper.
+2. Convert it with a direct local `flexfloat<5, 10>` model.
+3. Convert it with `typeSimulationFF(5, 10, value)` from the ADF helper.
 4. Compare the two FP32 bit patterns.
 
 The sample input file is `inputs/lowprecision_fp32_values.hex`.
 
 Current observed result:
 
-- finite values match the SoftFloat round-trip
-- the helper now matches the SoftFloat round-trip on the sample set with no
+- finite values match the direct FlexFloat model
+- the helper matches the direct FlexFloat model on the sample set with no
   mismatches
 
 The FP64 hook-only test is `src/lowprecision_fp16_fp64_hook_compare.cpp`.
@@ -96,9 +96,9 @@ The FP64 hook-only test is `src/lowprecision_fp16_fp64_hook_compare.cpp`.
 It validates the FP64 overload used by the FP64 LowPrecision FP16 hook:
 
 1. Read a raw FP64 bit pattern from `inputs/lowprecision_fp64_values.hex`.
-2. Convert it with SoftFloat using `FP64 -> FP16 -> FP64`.
-3. Convert it with `typeSimulationSoftFloatFP16(uint64_t)`.
-4. Compare the resulting FP64 bit patterns and SoftFloat exception flags.
+2. Convert it with a direct local `flexfloat<5, 10>` model.
+3. Convert it with `typeSimulationFF64(5, 10, value)` from the ADF helper.
+4. Compare the resulting FP64 bit patterns.
 
 Current observed result on the directed FP64 input file:
 

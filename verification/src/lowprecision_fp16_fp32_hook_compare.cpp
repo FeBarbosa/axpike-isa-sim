@@ -8,8 +8,7 @@
 #include <sstream>
 #include <string>
 
-#include "softfloat/softfloat.h"
-#include "adele/adf/LowPrecisionSimulation/typeConvertionSoftFloat.h"
+#include "adele/adf/LowPrecisionSimulation/typeConvertion.h"
 
 static bool parse_u32_hex(const std::string& token, uint32_t& out)
 {
@@ -23,17 +22,30 @@ static bool parse_u32_hex(const std::string& token, uint32_t& out)
     return true;
 }
 
-static uint32_t softfloat_hook_model(uint32_t fp32_bits)
+static float bits_to_host_float(uint32_t bits)
 {
-    const float32_t in{fp32_bits};
-    const float16_t half = f32_to_f16(in);
-    const float32_t out = f16_to_f32(half);
-    return out.v;
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static uint32_t host_float_to_bits(float value)
+{
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+static uint32_t direct_flexfloat_model(uint32_t fp32_bits)
+{
+    const float fp32_value = bits_to_host_float(fp32_bits);
+    const flexfloat<5, 10> lowprecision_value = fp32_value;
+    return host_float_to_bits(static_cast<float>(lowprecision_value));
 }
 
 static uint32_t lowprecision_hook_model(uint32_t fp32_bits)
 {
-    return typeSimulationSoftFloatFP16(fp32_bits);
+    return typeSimulationFF(5, 10, fp32_bits);
 }
 
 static std::string hex32(uint32_t value)
@@ -58,8 +70,6 @@ int main(int argc, char** argv)
 
     std::fesetround(FE_TONEAREST);
     std::feclearexcept(FE_ALL_EXCEPT);
-    softfloat_roundingMode = softfloat_round_near_even;
-    softfloat_detectTininess = softfloat_tininess_afterRounding;
 
     std::string line;
     std::size_t line_no = 0;
@@ -87,14 +97,14 @@ int main(int argc, char** argv)
 
         ++total;
 
-        const uint32_t soft_bits = softfloat_hook_model(fp32_bits);
+        const uint32_t direct_bits = direct_flexfloat_model(fp32_bits);
         const uint32_t hook_bits = lowprecision_hook_model(fp32_bits);
 
-        if (soft_bits != hook_bits) {
+        if (direct_bits != hook_bits) {
             ++mismatches;
             std::cout << "mismatch"
                       << " in=" << hex32(fp32_bits)
-                      << " soft=" << hex32(soft_bits)
+                      << " direct=" << hex32(direct_bits)
                       << " hook=" << hex32(hook_bits)
                       << '\n';
         }

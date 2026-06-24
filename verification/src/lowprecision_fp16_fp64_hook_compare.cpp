@@ -1,14 +1,14 @@
 #include <cfenv>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
 
-#include "softfloat/softfloat.h"
-#include "adele/adf/LowPrecisionSimulation/typeConvertionSoftFloat.h"
+#include "adele/adf/LowPrecisionSimulation/typeConvertion.h"
 
 static bool parse_u64_hex(const std::string& token, uint64_t& out)
 {
@@ -22,17 +22,30 @@ static bool parse_u64_hex(const std::string& token, uint64_t& out)
     return true;
 }
 
-static uint64_t softfloat_hook_model(uint64_t fp64_bits)
+static double bits_to_host_double(uint64_t bits)
 {
-    const float64_t in{fp64_bits};
-    const float16_t half = f64_to_f16(in);
-    const float64_t out = f16_to_f64(half);
-    return out.v;
+    double value = 0.0;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static uint64_t host_double_to_bits(double value)
+{
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+static uint64_t direct_flexfloat_model(uint64_t fp64_bits)
+{
+    const double fp64_value = bits_to_host_double(fp64_bits);
+    const flexfloat<5, 10> lowprecision_value = fp64_value;
+    return host_double_to_bits(static_cast<double>(lowprecision_value));
 }
 
 static uint64_t lowprecision_hook_model(uint64_t fp64_bits)
 {
-    return typeSimulationSoftFloatFP16(fp64_bits);
+    return typeSimulationFF64(5, 10, fp64_bits);
 }
 
 static std::string hex64(uint64_t value)
@@ -57,8 +70,6 @@ int main(int argc, char** argv)
 
     std::fesetround(FE_TONEAREST);
     std::feclearexcept(FE_ALL_EXCEPT);
-    softfloat_roundingMode = softfloat_round_near_even;
-    softfloat_detectTininess = softfloat_tininess_afterRounding;
 
     std::string line;
     std::size_t line_no = 0;
@@ -86,23 +97,15 @@ int main(int argc, char** argv)
 
         ++total;
 
-        softfloat_exceptionFlags = 0;
-        const uint64_t soft_bits = softfloat_hook_model(fp64_bits);
-        const uint_fast8_t soft_flags = softfloat_exceptionFlags;
-
-        softfloat_exceptionFlags = 0;
+        const uint64_t direct_bits = direct_flexfloat_model(fp64_bits);
         const uint64_t hook_bits = lowprecision_hook_model(fp64_bits);
-        const uint_fast8_t hook_flags = softfloat_exceptionFlags;
 
-        if (soft_bits != hook_bits || soft_flags != hook_flags) {
+        if (direct_bits != hook_bits) {
             ++mismatches;
             std::cout << "mismatch"
                       << " in=" << hex64(fp64_bits)
-                      << " soft=" << hex64(soft_bits)
+                      << " direct=" << hex64(direct_bits)
                       << " hook=" << hex64(hook_bits)
-                      << " soft_flags=0x" << std::hex << static_cast<unsigned>(soft_flags)
-                      << " hook_flags=0x" << static_cast<unsigned>(hook_flags)
-                      << std::dec
                       << '\n';
         }
     }

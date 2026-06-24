@@ -16,7 +16,6 @@ Please implement a temporary, low-noise trace facility in AxPIKE that logs low-p
 
 - `adele/adf/LowPrecisionFP16.cc`
 - `adele/adf/LowPrecisionE5M2.cc`
-- `adele/adf/LowPrecisionSimulation/typeConvertionSoftFloat.cc`
 - `adele/adf/LowPrecisionSimulation/typeConvertion.c`
 - Related ADF files if needed:
   - `adele/adf/LowPrecisionFP16.adf`
