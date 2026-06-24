@@ -111,19 +111,24 @@ all-cxx-flags := \
 all-c-flags := \
   $(mcppbs-CPPFLAGS) $(mcppbs-CFLAGS) $(CPPFLAGS) $(CFLAGS)
 
-COMPILE       := $(CXX) -MMD -MP $(all-cxx-flags) $(sprojs_include) @BOOST_CPPFLAGS@
+FLEXFLOAT_PREFIX ?= $(HOME)/.local
+FLEXFLOAT_CPPFLAGS := -I$(FLEXFLOAT_PREFIX)/include
+FLEXFLOAT_LDFLAGS := -L$(FLEXFLOAT_PREFIX)/lib
+FLEXFLOAT_LIBS := -lflexfloat
+
+COMPILE       := $(CXX) -MMD -MP $(all-cxx-flags) $(sprojs_include) @BOOST_CPPFLAGS@ $(FLEXFLOAT_CPPFLAGS)
 COMPILE_C     := $(CC) -MMD -MP $(all-c-flags) $(sprojs_include)
 
 # Linker
 #  - LDFLAGS : Flags for the linker (eg. -L)
 #  - LIBS    : Library flags (eg. -l)
 
-mcppbs-LDFLAGS := @LDFLAGS@ @BOOST_LDFLAGS@
+mcppbs-LDFLAGS := @LDFLAGS@ @BOOST_LDFLAGS@ $(FLEXFLOAT_LDFLAGS)
 all-link-flags := $(mcppbs-LDFLAGS) $(LDFLAGS)
 
 comma := ,
 LD            := $(CXX)
-LIBS          := @LIBS@ @BOOST_ASIO_LIB@ @BOOST_REGEX_LIB@
+LIBS          := @LIBS@ @BOOST_ASIO_LIB@ @BOOST_REGEX_LIB@ $(FLEXFLOAT_LIBS)
 LINK          := $(LD) -L. $(all-link-flags) -Wl,-rpath,$(install_libs_dir) $(patsubst -L%,-Wl$(comma)-rpath$(comma)%,$(filter -L%,$(LDFLAGS)))
 
 # Library creation
@@ -353,6 +358,11 @@ endef
 
 $(foreach sproj,$(sprojs_enabled), \
   $(eval $(call subproject_template,$(sproj),$(subst -,_,$(sproj)))))
+
+# ADeLe control headers are included transitively by decode.h, so these
+# objects need the generated instruction count header before compile.
+$(fesvr_objs) $(riscv_objs) $(disasm_objs) $(customext_objs) \
+$(spike_main_objs) $(spike_main_install_prog_objs): insn_count.h
 
 #-------------------------------------------------------------------------
 # Autodependency files

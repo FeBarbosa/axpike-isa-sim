@@ -8,3 +8,9 @@ autom4te.cache/
 .gdb_history
 .#*
 *~
+*.csv
+
+# Verification generated artifacts
+verification/out/fp16_*
+verification/out/fp64_*
+verification/scripts/__pycache__/

@@ -1,0 +1,17 @@
+# Raw FP32 values for the lowprecision hook-only test.
+00000000
+80000000
+3f800000
+bf800000
+40000000
+c0000000
+7f800000
+ff800000
+7fc00000
+ffc00000
+007fffff
+00800000
+3f7fffff
+3eaaaaab
+41200000
+c1200000
