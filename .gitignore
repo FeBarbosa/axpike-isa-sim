@@ -9,6 +9,7 @@ autom4te.cache/
 .#*
 *~
 *.csv
+*.pdf
 
 # Verification generated artifacts
 verification/out/fp16_*
