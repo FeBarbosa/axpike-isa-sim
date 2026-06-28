@@ -4,9 +4,9 @@
 
 This phase defines version 1.0 of the transprecision infrastructure for AxPIKE. The implementation will reuse the existing ADF wrappers that intercept reads from and writes to the floating-point register file.
 
-The infrastructure will classify scalar FP32 and FP64 instructions for execution using the smallest supported floating-point type compatible with their operands. It will preserve the architectural FP32 or FP64 register storage used by Spike while storing values that have been quantized according to the classified execution type.
+The infrastructure will classify scalar FP32 and FP64 instructions for execution using the smallest supported floating-point type compatible with their operands. It preserves the architectural FP32 or FP64 register representation used by Spike while associating each floating-point register with a tag that records the classified type of its stored value. For an inexact result, the value is rounded to the classified type before being stored in its architectural FP32 or FP64 representation.
 
-This phase is an implementation and instrumentation effort. It does not evaluate the later research policy based on active mantissa bits and does not predict RTL cost, performance, area, latency, or energy consumption.
+This phase is an implementation and instrumentation effort. It does not evaluate the later research demotion/promotion policy based on active mantissa bits and does not predict RTL cost, performance, area, latency, or energy consumption.
 
 ## Scope
 
@@ -17,7 +17,7 @@ Version 1.0 supports the following types in ascending selection precedence:
 3. `FP32`
 4. `FP64`
 
-Other reduced types may be integrated after version 1.0. This initial set was selected to simplify and accelerate development while preserving a strict precedence in which each type has greater range or precision than the previous type.
+Other reduced types may be integrated after version 1.0. This initial set was selected to simplify and accelerate development while preserving a strict precedence in which each type has greater range and precision than the previous type.
 
 The implementation covers the scalar FP32 and FP64 ADF groups that read from or write to the floating-point register file. Instruction-specific handling for loads, stores, conversions, unary operations, comparisons, and arithmetic operations will be determined while mapping these groups to the implementation.
 
@@ -25,7 +25,7 @@ The implementation covers the scalar FP32 and FP64 ADF groups that read from or 
 
 Each floating-point register must maintain a persistent type tag in addition to its architectural FP32 or FP64 value. The tag records the type assigned to the stored value and allows a promotion caused by one instruction to affect subsequent instructions.
 
-The tag does not change the physical register width modeled by Spike. Values classified or quantized as `E5M2` or `FP16` continue to be stored using the corresponding architectural FP32 or FP64 encoding.
+The tag does not change the physical register width modeled by Spike. Values classified as `E5M2` or `FP16` continue to be stored using the corresponding architectural FP32 or FP64 encoding.
 
 The location and representation of the tags in the AxPIKE implementation will be determined through direct code investigation.
 
@@ -34,9 +34,9 @@ The location and representation of the tags in the AxPIKE implementation will be
 A value is exactly representable in a candidate type when the following round trip preserves its original architectural bit pattern:
 
 ```text
-architectural FP32/FP64 value
-    -> candidate reduced type
-    -> architectural FP32/FP64 value
+    **architectural FP32/FP64 value**
+    -> conversion to the candidate reduced type (FlexFloat)
+    -> conversion back to the **architectural FP32/FP64 value**
 ```
 
 Candidate types are tested in selection-precedence order. If the bit patterns differ, the next type is evaluated. NaN, infinity, signed zero, and subnormal values follow the special-value policy defined below rather than relying only on the finite-normal comparison rule.
@@ -57,7 +57,7 @@ The architectural FP32 or FP64 result produced by Spike is tested against the in
 
 The range-event and special-value rules take precedence over the generic inexact-result promotion rule. An overflow, underflow, NaN, infinity, or signed-zero case must first be handled according to the policy in the next section; only remaining finite results follow the exact or inexact processing below.
 
-If the result is exactly representable in the intended execution type, it is stored using the corresponding architectural FP32 or FP64 encoding. The destination register receives the smallest supported tag that represents the result exactly. If this tag is smaller than the intended execution type, the transition is recorded as a demotion.
+If the result is exactly representable in the intended execution type, it is stored using the corresponding architectural FP32 or FP64 encoding. The destination register receives the smallest supported tag that represents the result exactly. If this tag is smaller than the intended execution type (for the isntruction that produced the value), the transition is recorded as a demotion.
 
 If conversion to the intended execution type is inexact:
 
