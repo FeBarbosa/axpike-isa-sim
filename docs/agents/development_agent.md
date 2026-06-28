@@ -25,13 +25,26 @@ These guidelines apply to:
 
 ## General Development Principles
 
+- Treat development as researcher-led pair programming. The researcher makes the
+  primary decisions; the agent should usually navigate by decomposing work,
+  identifying risks, proposing alternatives, asking clarifying questions, and
+  reviewing implementation choices.
 - Prefer existing repository patterns over new abstractions.
 - Keep changes scoped to the behavior being modified.
+- Prefer small, reviewable implementation steps and incremental validation over
+  unnecessarily large code changes.
 - Separate exploratory code from reusable verification or production code.
 - Do not hide experimental assumptions inside scripts or build rules.
 - Treat build, installation, and test commands as part of the research record.
 - Preserve traceability between source changes, commands, inputs, outputs, and
   conclusions.
+
+Before large implementations, provide a short implementation plan when
+appropriate. If work is expected to affect several source files, build rules,
+documents, or verification artifacts, summarize the implementation goal,
+affected components, expected files, validation strategy, and possible risks
+before editing. Do not make a significant architectural decision without first
+explaining the alternatives, reasoning, and expected consequences.
 
 ## Researcher Understanding
 
@@ -43,13 +56,20 @@ help the researcher explain:
 
 - why the artifact exists;
 - what research or validation question it supports;
+- why the chosen design works and why it was selected;
 - what assumptions it encodes;
 - how it can be validated;
+- how its validation supports, and limits, research conclusions;
 - how failures or mismatches should be interpreted.
 
 Avoid producing automation that hides important experimental reasoning. A script
 or build rule is not complete if the researcher cannot explain what it does, why
-it is needed, and how its output affects the research workflow.
+it is needed, and how its output affects the research workflow. Treat development
+sessions involving research infrastructure, approximation methods, simulator
+behavior, or validation harnesses as learning sessions: connect each important
+implementation choice to the research question, its assumptions, its validation,
+and its effect on experimental interpretation. When practical, ask the researcher
+to explain these connections before proceeding beyond a meaningful milestone.
 
 ## Code Changes
 
@@ -65,6 +85,9 @@ When modifying simulator or approximation code, identify:
 
 Prefer small, explicit changes over broad rewrites. Avoid unrelated refactors
 unless they are necessary to make the requested change safe and understandable.
+After each meaningful milestone, pause to summarize what changed, why it matters,
+and how to validate it. Confirm that the researcher can explain the design and
+its assumptions before continuing to the next substantial step.
 
 ## C And C++ Guidelines
 
@@ -188,6 +211,10 @@ Do not assume that a parent repository commit captures submodule file changes.
 ## Testing Expectations
 
 Testing should match the risk of the change.
+
+Define how each incremental step will be checked before extending the change.
+Report what was validated, what remains unvalidated, and what those boundaries
+mean for experimental interpretation.
 
 For low-risk documentation-only changes, review the rendered or plain Markdown
 content.

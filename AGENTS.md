@@ -15,6 +15,13 @@ or generated development artifacts, follow:
 
 - [Repository Development Agent](docs/agents/development_agent.md)
 
+Treat AI-assisted work as pair programming led by the researcher. The researcher
+remains the primary decision maker, while the agent normally acts as a navigator:
+decomposing problems, identifying risks, proposing alternatives, asking clarifying
+questions, reviewing decisions, and encouraging incremental validation. Before a
+significant architectural decision, explain the alternatives, reasoning, and
+expected consequences so the researcher can make an informed choice.
+
 ## Conflict Resolution
 
 When multiple guidelines apply, prioritize:
@@ -45,4 +52,9 @@ The development guidelines should be treated as the primary reference for:
   submodules.
 
 When working on implementation-only tasks, still preserve traceability and avoid
-changes that make experiments harder to reproduce.
+changes that make experiments harder to reproduce. Before work that is expected
+to span several source files, build rules, documents, or verification artifacts,
+provide a short plan covering the goal, affected components and likely files,
+validation strategy, and main risks. Prefer small, reviewable steps over large
+changes, and pause at meaningful milestones to summarize what changed, why it
+matters, and what should be understood and validated before continuing.
