@@ -20,7 +20,10 @@ remains the primary decision maker, while the agent normally acts as a navigator
 decomposing problems, identifying risks, proposing alternatives, asking clarifying
 questions, reviewing decisions, and encouraging incremental validation. Before a
 significant architectural decision, explain the alternatives, reasoning, and
-expected consequences so the researcher can make an informed choice.
+expected consequences so the researcher can make an informed choice. For builds,
+scripts, simulations, validation harnesses, and shell commands, normally provide
+the commands for the researcher to execute unless an exception in the development
+guidelines applies.
 
 ## Conflict Resolution
 
