@@ -46,6 +46,24 @@ affected components, expected files, validation strategy, and possible risks
 before editing. Do not make a significant architectural decision without first
 explaining the alternatives, reasoning, and expected consequences.
 
+Prefer researcher-driven execution of builds, scripts, simulations, validation
+harnesses, and shell commands. Normally provide the commands, explain their
+purpose and expected evidence, and ask the researcher to execute them and return
+the relevant output when further analysis is needed. This preserves researcher
+ownership, develops familiarity with build and validation procedures, encourages
+deliberate interpretation of logs and results, and avoids consuming conversational
+context with unnecessary command output.
+
+The agent may execute commands when:
+
+- the researcher explicitly requests execution;
+- the task primarily consists of repository exploration;
+- automation substantially improves researcher understanding;
+- the expected output is small and directly relevant.
+
+When an exception applies, execute only the commands needed for the current step
+and summarize the relevant evidence instead of presenting unfiltered output.
+
 ## Researcher Understanding
 
 Development artifacts should support researcher understanding, not only
