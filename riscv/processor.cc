@@ -11,6 +11,7 @@
 #include "disasm.h"
 #include "platform.h"
 #include "vector_unit.h"
+#include "insn_count.h"
 #include "debug_defines.h"
 #include <cinttypes>
 #include <cmath>
@@ -145,6 +146,10 @@ void state_t::reset(processor_t* const proc, reg_t max_isa)
   pc = DEFAULT_RSTVEC;
   XPR.reset();
   FPR.reset();
+  FPR_TAGS.reset();
+  last_transprecision_effective_type = transprecision_type_t::UNCLASSIFIED;
+  transprecision_effective_type_observations = 0;
+  transprecision_counters.reset(INSN_COUNT);
 
   prv = prev_prv = PRV_M;
   v = prev_v = false;

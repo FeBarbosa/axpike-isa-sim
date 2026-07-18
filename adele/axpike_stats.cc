@@ -1,10 +1,12 @@
 #include "axpike_stats.h"
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <unistd.h>
 #include "processor.h"
 #include "insn_count.h"
 #include "mmu.h"
+#include "transprecision_classification.h"
 
 
 std::vector<std::string> AxPIKE::Stats::insns;
@@ -18,8 +20,10 @@ void AxPIKE::Stats::printCounters() {
   std::string fname;
   fname = "AxPIKE_counters_" + std::to_string(::getpid()) + "_hart" + std::to_string(p->get_id()) + "_" + std::to_string(seq) + ".csv";
   printInstrCounter(fname.c_str());
-  fname = "AxPIKE_energy_" + std::to_string(::getpid()) + "_hart" + std::to_string(p->get_id()) + "_" + std::to_string(seq++) + ".csv";
+  fname = "AxPIKE_energy_" + std::to_string(::getpid()) + "_hart" + std::to_string(p->get_id()) + "_" + std::to_string(seq) + ".csv";
   printEnergyCounter(fname.c_str());
+  fname = "AxPIKE_transprecision_" + std::to_string(::getpid()) + "_hart" + std::to_string(p->get_id()) + "_" + std::to_string(seq++) + ".csv";
+  printTransprecisionCounter(fname.c_str());
   clearCounters();
 }
 
@@ -254,6 +258,90 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
   }
   else {
     std::cerr << "AxPIKE Error: Unable to open file \"" << fname << "\" to save energy counters." << std::endl;
+  }
+}
+
+void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
+  std::ofstream fp;
+
+  fp.open(fname, std::ios::out | std::ios::trunc);
+  std::cerr << "Writing AxPIKE transprecision counters to " << fname
+            << std::endl;
+
+  if (fp.is_open()) {
+    const auto& counters = p->state.transprecision_counters;
+
+    fp << "\"Category\",\"Instruction\",\"From\",\"To\",\"Type\",\"Class\",\"Value\""
+       << std::endl;
+    fp << "\"transprecision_effective_type_observations\", "
+       << "\"\",\"\",\"\",\"\",\"\", "
+       << p->state.transprecision_effective_type_observations << std::endl;
+    fp << "\"last_transprecision_effective_type\", "
+       << "\"\",\"\",\"\",\""
+       << transprecision_type_name(p->state.last_transprecision_effective_type)
+       << "\",\"\", 0" << std::endl;
+    fp << "\"operand_unclassified_total\", "
+       << "\"\",\"\",\"\",\"\",\"\", "
+       << counters.operand_unclassified_total << std::endl;
+
+    for (size_t type = 0; type < transprecision_type_bucket_count; type++) {
+      fp << "\"effective_type_total\", "
+         << "\"\",\"\",\"\",\"" << transprecision_type_bucket_name(type)
+         << "\",\"\", " << counters.effective_type_total[type]
+         << std::endl;
+      fp << "\"write_tag_total\", "
+         << "\"\",\"\",\"\",\"" << transprecision_type_bucket_name(type)
+         << "\",\"\", " << counters.write_tag_total[type]
+         << std::endl;
+    }
+
+    for (size_t value_class = 0;
+         value_class < transprecision_value_class_bucket_count;
+         value_class++) {
+      fp << "\"operation_result_class_total\", "
+         << "\"\",\"\",\"\",\"\",\""
+         << transprecision_value_class_name(value_class)
+         << "\", "
+         << counters.operation_result_class_total[value_class]
+         << std::endl;
+    }
+
+    for (size_t from = 0; from < transprecision_type_bucket_count; from++) {
+      for (size_t to = 0; to < transprecision_type_bucket_count; to++) {
+        fp << "\"promotion_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(from)
+           << "\",\"" << transprecision_type_bucket_name(to)
+           << "\",\"\",\"\", "
+           << counters.promotion_from_to[from][to] << std::endl;
+        fp << "\"result_narrow_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(from)
+           << "\",\"" << transprecision_type_bucket_name(to)
+           << "\",\"\",\"\", "
+           << counters.result_narrow_from_to[from][to] << std::endl;
+      }
+    }
+
+    const size_t instruction_count =
+        std::min(counters.effective_type_by_instruction.size(),
+                 AxPIKE::Stats::insns.size());
+    for (size_t instr = 0; instr < instruction_count; instr++) {
+      for (size_t type = 0; type < transprecision_type_bucket_count; type++) {
+        const uint64_t count =
+            counters.effective_type_by_instruction[instr][type];
+        if (count == 0)
+          continue;
+        fp << "\"effective_type_by_instruction\", "
+           << "\"" << AxPIKE::Stats::insns[instr] << "\",\"\",\"\",\""
+           << transprecision_type_bucket_name(type)
+           << "\",\"\", " << count << std::endl;
+      }
+    }
+
+    fp.close();
+  }
+  else {
+    std::cerr << "AxPIKE Error: Unable to open file \"" << fname
+              << "\" to save transprecision counters." << std::endl;
   }
 }
 

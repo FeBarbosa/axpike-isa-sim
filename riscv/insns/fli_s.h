@@ -36,5 +36,5 @@ require_fp;
     [0b11110] = 0x7f800000,  /* +inf */
     [0b11111] = defaultNaNF32UI
   };
-  WRITE_FRD_F(f32(bits[insn.rs1()]));
+  WRITE_FRD_F_ARCHITECTURAL(f32(bits[insn.rs1()]));
 }

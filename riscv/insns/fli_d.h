@@ -36,5 +36,5 @@ require_fp;
     [0b11110] = 0x7ff0000000000000ull,  /* +inf */
     [0b11111] = defaultNaNF64UI
   };
-  WRITE_FRD_D(f64(bits[insn.rs1()]));
+  WRITE_FRD_D_ARCHITECTURAL(f64(bits[insn.rs1()]));
 }

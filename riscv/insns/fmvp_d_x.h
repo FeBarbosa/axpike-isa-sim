@@ -5,4 +5,4 @@ require_fp;
 ui64_f64 ui;
 ui.ui = ((uint64_t)RS2) << 32;
 ui.ui |= zext32(RS1);
-WRITE_FRD_D(f64(ui.ui));
+WRITE_FRD_D_ARCHITECTURAL(f64(ui.ui));

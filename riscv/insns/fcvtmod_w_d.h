@@ -1,6 +1,7 @@
 require_extension('D');
 require_extension(EXT_ZFA);
 require_fp;
+OBSERVE_FRS1_EFFECTIVE_TYPE();
 uint64_t a = FRS1_D.v;
 
 uint32_t sign = signF64UI(a);

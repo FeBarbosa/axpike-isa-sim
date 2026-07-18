@@ -36,6 +36,7 @@ namespace AxPIKE {
       void clearCounters();
       void printInstrCounter(const char* fname);
       void printEnergyCounter(const char* fname);
+      void printTransprecisionCounter(const char* fname);
       void insnDispatch(double energy);
       static void initStats();
       void setStats();

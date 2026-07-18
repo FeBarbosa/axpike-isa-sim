@@ -15,6 +15,7 @@
 #include "csrs.h"
 #include "isa_parser.h"
 #include "triggers.h"
+#include "transprecision.h"
 #include "../fesvr/memif.h"
 #include "vector_unit.h"
 
@@ -89,6 +90,10 @@ struct state_t
   reg_t pc;
   regfile_t<reg_t, NXPR, true> XPR;
   regfile_t<freg_t, NFPR, false> FPR;
+  transprecision_tag_file_t<NFPR> FPR_TAGS;
+  transprecision_type_t last_transprecision_effective_type;
+  uint64_t transprecision_effective_type_observations;
+  transprecision_counters_t transprecision_counters;
 
   // control and status registers
   std::unordered_map<reg_t, csr_t_p> csrmap;

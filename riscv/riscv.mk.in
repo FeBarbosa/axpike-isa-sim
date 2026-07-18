@@ -45,6 +45,8 @@ riscv_install_hdrs = \
 	simif.h \
 	trap.h \
 	triggers.h \
+	transprecision.h \
+	transprecision_classification.h \
 	vector_unit.h \
 
 riscv_precompiled_hdrs = \
@@ -72,6 +74,7 @@ riscv_srcs = \
 	csrs.cc \
 	csr_init.cc \
 	triggers.cc \
+	transprecision_classification.cc \
 	vector_unit.cc \
 	socketif.cc \
 	cfg.cc \
@@ -79,6 +82,20 @@ riscv_srcs = \
 
 riscv_test_srcs = \
   check-opcode-overlap.t.cc \
+  transprecision-classification.t.cc \
+  transprecision-fp-execution.t.cc \
+  transprecision-operands.t.cc \
+  transprecision-write-macros.t.cc \
+  transprecision-tags.t.cc \
+
+# The classifier uses Adele's conversion helpers, exposing the existing static
+# library cycle between riscv and adele when this standalone test is linked.
+transprecision-classification-utst: riscv_LDFLAGS += -Wl,--start-group
+transprecision-classification-utst: riscv_test_LDFLAGS_AFTER += -Wl,--end-group
+transprecision-fp-execution-utst: riscv_LDFLAGS += -Wl,--start-group
+transprecision-fp-execution-utst: riscv_test_LDFLAGS_AFTER += -Wl,--end-group
+transprecision-write-macros-utst: riscv_LDFLAGS += -Wl,--start-group
+transprecision-write-macros-utst: riscv_test_LDFLAGS_AFTER += -Wl,--end-group
 
 riscv_gen_hdrs = \
 	insn_list.h \

@@ -269,7 +269,7 @@ $$($(2)_test_objs) : %.o : %.cc
 	$(COMPILE) -c $$<
 
 $$($(2)_test_exes) : %-utst : %.t.o $$($(2)_test_libnames)
-	$(LINK) $$($(2)_LDFLAGS) -o $$@ $$< $$($(2)_test_libnames) $(LIBS)
+	$(LINK) $$($(2)_LDFLAGS) -o $$@ $$< $$($(2)_test_libnames) $$($(2)_test_LDFLAGS_AFTER) $(LIBS)
 
 $(2)_deps += $$($(2)_test_deps)
 $(2)_junk += \
