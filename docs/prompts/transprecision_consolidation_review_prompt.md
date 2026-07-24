@@ -1,67 +1,67 @@
 # Transprecision Consolidation Review Prompt
 
-Use este prompt para iniciar um novo chat focado em consolidar, revisar,
-documentar e estudar a implementação atual da transprecisão no AxPIKE antes de
-iniciar a próxima política experimental.
+Use this prompt to start a new chat focused on consolidating, reviewing,
+documenting, and studying the current transprecision implementation in AxPIKE
+before starting the next experimental policy.
 
 ```text
-Leia AGENTS.md, docs/agents/development_agent.md e
+Read AGENTS.md, docs/agents/development_agent.md, and
 docs/agents/research_documentation_agent.md.
 
-Quero consolidar a implementação atual da transprecisão no AxPIKE antes de
-iniciar a política de promoção/demoção baseada em bits menos significativos
-da mantissa.
+I want to consolidate the current transprecision implementation in AxPIKE before
+starting the promotion/demotion policy based on the least significant bits of
+the mantissa.
 
-Parte importante deste trabalho é melhorar meu entendimento técnico e científico
-da implementação. O processo deve funcionar como um estudo guiado: reconstrua as
-decisões feitas, explique como a transprecisão foi implementada no código, como
-ela foi validada, quais métricas foram incorporadas ao AxPIKE e como cada uma
-dessas partes sustenta ou limita o experimento. Evite apenas resumir o estado
-final; ajude-me a ser capaz de explicar a implementação e suas validações.
+An important part of this work is improving my technical and scientific
+understanding of the implementation. The process should work as a guided study:
+reconstruct the decisions that were made, explain how transprecision was
+implemented in the code, how it was validated, which metrics were incorporated
+into AxPIKE, and how each of these parts supports or limits the experiment. Do
+not only summarize the final state; help me become able to explain the
+implementation and its validation.
 
-Faça essa reconstrução de maneira iterativa, em pequenos passos. A cada passo,
-explique um bloco limitado da implementação ou da validação, conecte esse bloco
-ao objetivo científico da transprecisão e proponha um pequeno questionário para
-verificar meu entendimento antes de avançar. Use as minhas respostas para ajustar
-o nível de detalhe, corrigir lacunas conceituais e decidir o próximo bloco de
-estudo.
+Perform this reconstruction iteratively, in small steps. At each step, explain a
+limited block of the implementation or validation, connect that block to the
+scientific objective of transprecision, and propose a short questionnaire to
+check my understanding before moving forward. Use my answers to adjust the level
+of detail, correct conceptual gaps, and decide the next study block.
 
-Objetivos:
-1. revisar o estado atual da implementação;
-2. mapear os arquivos modificados e responsabilidades;
-3. listar as decisões de projeto já tomadas;
-4. listar validações executadas e o que cada uma prova;
-5. identificar limitações conhecidas;
-6. preparar um resumo técnico sucinto para meus orientadores;
-7. organizar próximos passos até a submissão do artigo em 7 de agosto de 2026.
+Objectives:
+1. review the current implementation state;
+2. map the modified files and their responsibilities;
+3. list the design decisions already made;
+4. list the validations that were executed and what each one demonstrates;
+5. identify known limitations;
+6. organize the next steps until the paper submission on August 7, 2026.
 
-Não implemente nada inicialmente. Primeiro avalie o repositório e produza um
-plano de documentação e validação.
+Do not implement anything initially. First evaluate the repository and produce a
+documentation and validation plan.
 
-Estado conhecido:
-- transprecision tags foram adicionadas ao estado dos registradores FP;
-- loads/escritas arquiteturais classificam o valor escrito;
-- operações FP classificam operandos e usam o maior tipo efetivo;
-- resultados são reclassificados no write-back;
-- especiais têm política definida: NaN/Inf de operação usam tipo efetivo,
-  NaN/Inf externos usam tipo arquitetural, +/-0 usa menor tipo disponível;
-- contadores de transprecisão foram adicionados ao CSV;
-- LeNet executou e gerou AxPIKE_transprecision_*.csv;
-- fcvt_d_s/fcvt_s_d foram ajustadas para contar pelo tipo efetivo do operando
-  fonte.
+Known state:
+- transprecision tags were added to the FP register state;
+- loads and architectural writes classify the written value;
+- FP operations classify operands and use the highest-precision effective type;
+- results are reclassified on write-back;
+- special values have a defined policy: NaN/Inf values produced by operations
+  use the effective type, external NaN/Inf values use the architectural type,
+  and +/-0 uses the smallest available type;
+- transprecision counters were added to the CSV output;
+- LeNet was executed and generated AxPIKE_transprecision_*.csv;
+- fcvt_d_s/fcvt_s_d were adjusted to count using the effective type of the
+  source operand.
 ```
 
-Estrutura esperada para o e-mail aos orientadores:
+After consolidating the current implementation, review the code with a focus on
+maintainability, readability, and explainability. This review should evaluate
+whether the implementation needs to be reorganized to separate more clearly:
 
-```text
-Assunto: Status da implementação de transprecisão no AxPIKE
+- the simulation of low-precision types through AxPIKE/ADF approximations;
+- the initial transprecision infrastructure based on tags, classification, and
+  metrics;
+- the points shared by both approaches, especially conversions, value
+  classification, and instrumentation.
 
-1. Objetivo da implementação
-2. O que já foi incorporado ao AxPIKE
-3. Métricas e CSVs gerados
-4. Validações realizadas
-5. Resultado preliminar com LeNet
-6. Limitações atuais
-7. Próximo experimento: política baseada em bits da mantissa
-8. Cronograma até 7 de agosto
-```
+The objective of this stage is not to refactor immediately, but to identify
+risks related to conceptual coupling, ambiguous names, mixed responsibilities,
+and design decisions that should be documented before evolving toward the
+mantissa-bit-based policy.
