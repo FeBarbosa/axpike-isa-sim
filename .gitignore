@@ -11,6 +11,9 @@ autom4te.cache/
 *.csv
 *.pdf
 
+# Independently versioned application checkout
+lenet-riscv-cpp-inference/
+
 # Verification generated artifacts
 verification/out/fp16_*
 verification/out/fp64_*
