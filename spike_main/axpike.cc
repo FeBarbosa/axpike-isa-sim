@@ -91,6 +91,10 @@ static void help(int exit_code = 1)
   fprintf(stderr, "  --adele-activate=     AxPIKE activate/deactivate approximations\n");
   fprintf(stderr, "  --adele-deactivate=     a1 and a2 on harts h0 and h1\n");
   fprintf(stderr, "    <h0:a1:a2...,h1:a1:a2...,...>\n");
+  fprintf(stderr, "  --transprecision-protected-bits=<vector>\n");
+  fprintf(stderr, "                        Set all protected mantissa widths as\n");
+  fprintf(stderr, "                        fp32-e5m2:n,fp32-fp16:n,fp64-e5m2:n,\n");
+  fprintf(stderr, "                        fp64-fp16:n,fp64-fp32:n\n");
   fprintf(stderr, "  --blocksz=<size>      Cache block size (B) for CMO operations(powers of 2) [default 64]\n");
 
   exit(exit_code);
@@ -540,6 +544,16 @@ int main(int argc, char** argv)
       [&](const char* s){ std::cerr << "adele-seed: " << s << std::endl; srand(atoi(s));});
   parser.option(0, "adele-activate", 1, adele_activate_parser);
   parser.option(0, "adele-deactivate", 1, adele_deactivate_parser);
+  parser.option(0, "transprecision-protected-bits", 1, [&](const char* s) {
+    try {
+      cfg.transprecision_policy = parse_transprecision_policy_config(s);
+    }
+    catch (const std::invalid_argument& error) {
+      fprintf(stderr, "Invalid --transprecision-protected-bits: %s\n",
+          error.what());
+      exit(EXIT_FAILURE);
+    }
+  });
   FILE *cmd_file = NULL;
   parser.option(0, "debug-cmd", 1, [&](const char* s){
      if ((cmd_file = fopen(s, "r"))==NULL) {

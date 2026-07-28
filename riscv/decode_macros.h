@@ -44,9 +44,11 @@
     STATE.XPR.write(reg, wdata); \
   })
 #define WRITE_FREG(reg, value) ({ \
+    const size_t __tp_write_reg = (reg); \
     freg_t wdata = freg(value); /* value may have side effects */ \
-    if (DECODE_MACRO_USAGE_LOGGED) STATE.log_reg_write[((reg) << 4) | 1] = wdata; \
-    DO_WRITE_FREG(reg, wdata); \
+    if (DECODE_MACRO_USAGE_LOGGED) STATE.log_reg_write[(__tp_write_reg << 4) | 1] = wdata; \
+    STATE.FPR_FP64_LOAD_BOXING.clear(__tp_write_reg); \
+    DO_WRITE_FREG(__tp_write_reg, wdata); \
   })
 #define WRITE_VSTATUS STATE.log_reg_write[3] = {0, 0};
 
@@ -100,8 +102,50 @@
 #define READ_ZDINX_REG(reg) (xlen == 32 ? f64(READ_REG_PAIR(reg)) : f64(STATE.XPR[reg] & (uint64_t)-1))
 #define READ_FREG_H(reg) (p->extension_enabled(EXT_ZFINX) ? f16(STATE.XPR[reg] & (uint16_t)-1) : f16(READ_FREG(reg)))
 #define READ_FREG_BF(reg) (p->extension_enabled(EXT_ZFINX) ? bf16(STATE.XPR[reg] & (uint16_t)-1) : bf16(READ_FREG(reg)))
-#define READ_FREG_F(reg) (p->extension_enabled(EXT_ZFINX) ? f32(STATE.XPR[reg] & (uint32_t)-1) : f32(READ_FREG(reg)))
-#define READ_FREG_D(reg) (p->extension_enabled(EXT_ZFINX) ? READ_ZDINX_REG(reg) : f64(READ_FREG(reg)))
+#define RECOVER_TRANSPRECISION_FREG_TAG(reg, bits, carrier, classifier) \
+do { \
+  const size_t __tp_recovery_reg = (reg); \
+  if (STATE.FPR_TAGS.read(__tp_recovery_reg) \
+      == transprecision_type_t::UNCLASSIFIED) { \
+    const auto __tp_recovery_classification = (classifier)(bits); \
+    const bool __tp_recovery_used_fallback = \
+        !transprecision_is_supported_type( \
+            __tp_recovery_classification.type); \
+    const transprecision_type_t __tp_recovered_tag = \
+        __tp_recovery_used_fallback \
+            ? (carrier) \
+            : __tp_recovery_classification.type; \
+    STATE.FPR_TAGS.write(__tp_recovery_reg, __tp_recovered_tag); \
+    STATE.transprecision_counters.record_lazy_reclassification( \
+        __tp_recovery_used_fallback); \
+  } \
+} while (0)
+#define READ_FREG_F(reg) ({ \
+  const size_t __tp_read_reg = (reg); \
+  const bool __tp_zfinx = p->extension_enabled(EXT_ZFINX); \
+  const auto __tp_read_value = __tp_zfinx \
+      ? f32(STATE.XPR[__tp_read_reg] & (uint32_t)-1) \
+      : f32(READ_FREG(__tp_read_reg)); \
+  if (!__tp_zfinx) { \
+    if (STATE.FPR_FP64_LOAD_BOXING.confirm_fp32_read(__tp_read_reg)) \
+      STATE.transprecision_counters \
+          .record_fp64_load_nan_boxed_fp32_effective(); \
+    RECOVER_TRANSPRECISION_FREG_TAG(__tp_read_reg, __tp_read_value.v, \
+        transprecision_type_t::FP32, classify_transprecision_fp32); \
+  } \
+  __tp_read_value; \
+})
+#define READ_FREG_D(reg) ({ \
+  const size_t __tp_read_reg = (reg); \
+  const bool __tp_zdinx = p->extension_enabled(EXT_ZFINX); \
+  const auto __tp_read_value = __tp_zdinx \
+      ? READ_ZDINX_REG(__tp_read_reg) \
+      : f64(READ_FREG(__tp_read_reg)); \
+  if (!__tp_zdinx) \
+    RECOVER_TRANSPRECISION_FREG_TAG(__tp_read_reg, __tp_read_value.v, \
+        transprecision_type_t::FP64, classify_transprecision_fp64); \
+  __tp_read_value; \
+})
 #define FRS1 READ_FREG(insn.rs1())
 #define FRS2 READ_FREG(insn.rs2())
 #define FRS3 READ_FREG(insn.rs3())
@@ -171,23 +215,58 @@ do { \
 #define WRITE_FRD(value) WRITE_FREG(insn.rd(), value)
 #define WRITE_FREG_F_ARCHITECTURAL(reg, value) \
 do { \
+  const size_t __tp_freg_reg = (reg); \
   auto __tp_freg_wdata = (value); \
   const auto __tp_freg_classification = \
-      classify_transprecision_fp32_architectural_write(__tp_freg_wdata.v); \
-  WRITE_FREG((reg), __tp_freg_wdata); \
-  STATE.FPR_TAGS.write((reg), __tp_freg_classification.type); \
+      classify_transprecision_fp32_architectural_write( \
+          __tp_freg_wdata.v, p->get_cfg().transprecision_policy); \
+  if (__tp_freg_classification.value_class \
+      == transprecision_value_class_t::NAN_VALUE) \
+    trace_transprecision_external_nan(32, __tp_freg_wdata.v, \
+        __tp_freg_reg, p->ax_control.cur_insn_id, p->ax_control.pc, \
+        p->ax_control.insn.bits()); \
+  WRITE_FREG(__tp_freg_reg, \
+      f32(static_cast<uint32_t>(__tp_freg_classification.selected_bits))); \
+  STATE.FPR_TAGS.write(__tp_freg_reg, __tp_freg_classification.type); \
   STATE.transprecision_counters.record_write_tag( \
       __tp_freg_classification.type); \
+  STATE.transprecision_counters.record_external_write( \
+      transprecision_value_class_bucket(__tp_freg_classification.value_class), \
+      transprecision_type_t::FP32, __tp_freg_classification.type, \
+      __tp_freg_classification.value_was_masked, \
+      __tp_freg_classification.masked_to_zero); \
 } while (0)
 #define WRITE_FREG_D_ARCHITECTURAL(reg, value) \
 do { \
+  const size_t __tp_freg_reg = (reg); \
   auto __tp_freg_wdata = (value); \
   const auto __tp_freg_classification = \
-      classify_transprecision_fp64_architectural_write(__tp_freg_wdata.v); \
-  WRITE_FREG((reg), __tp_freg_wdata); \
-  STATE.FPR_TAGS.write((reg), __tp_freg_classification.type); \
+      classify_transprecision_fp64_architectural_write( \
+          __tp_freg_wdata.v, p->get_cfg().transprecision_policy); \
+  if (__tp_freg_classification.value_class \
+      == transprecision_value_class_t::NAN_VALUE) \
+    trace_transprecision_external_nan(64, __tp_freg_wdata.v, \
+        __tp_freg_reg, p->ax_control.cur_insn_id, p->ax_control.pc, \
+        p->ax_control.insn.bits()); \
+  WRITE_FREG(__tp_freg_reg, f64(__tp_freg_classification.selected_bits)); \
+  STATE.FPR_TAGS.write(__tp_freg_reg, __tp_freg_classification.type); \
   STATE.transprecision_counters.record_write_tag( \
       __tp_freg_classification.type); \
+  STATE.transprecision_counters.record_external_write( \
+      transprecision_value_class_bucket(__tp_freg_classification.value_class), \
+      transprecision_type_t::FP64, __tp_freg_classification.type, \
+      __tp_freg_classification.value_was_masked, \
+      __tp_freg_classification.masked_to_zero); \
+} while (0)
+#define WRITE_FREG_D_LOAD_ARCHITECTURAL(reg, value) \
+do { \
+  const size_t __tp_freg_load_reg = (reg); \
+  auto __tp_freg_load_wdata = (value); \
+  const auto __tp_freg_load_classification = \
+      classify_transprecision_fp64_load(__tp_freg_load_wdata.v); \
+  WRITE_FREG_D_ARCHITECTURAL(__tp_freg_load_reg, __tp_freg_load_wdata); \
+  STATE.FPR_FP64_LOAD_BOXING.mark_candidate(__tp_freg_load_reg, \
+      __tp_freg_load_classification.nan_boxed_fp32_candidate); \
 } while (0)
 #define WRITE_FREG_F_OPERATION_RESULT(reg, value, intended_type) \
 do { \
@@ -195,14 +274,18 @@ do { \
   const transprecision_type_t __tp_freg_intended_type = (intended_type); \
   const auto __tp_freg_classification = \
       classify_transprecision_fp32_operation_result( \
-          __tp_freg_wdata.v, __tp_freg_intended_type); \
-  WRITE_FREG((reg), __tp_freg_wdata); \
+          __tp_freg_wdata.v, __tp_freg_intended_type, \
+          p->get_cfg().transprecision_policy); \
+  WRITE_FREG((reg), \
+      f32(static_cast<uint32_t>(__tp_freg_classification.selected_bits))); \
   STATE.FPR_TAGS.write((reg), __tp_freg_classification.type); \
   STATE.transprecision_counters.record_write_tag( \
       __tp_freg_classification.type); \
   STATE.transprecision_counters.record_operation_result( \
       transprecision_value_class_bucket(__tp_freg_classification.value_class), \
-      __tp_freg_intended_type, __tp_freg_classification.type); \
+      __tp_freg_intended_type, __tp_freg_classification.type, \
+      __tp_freg_classification.value_was_masked, \
+      __tp_freg_classification.masked_to_zero); \
 } while (0)
 #define WRITE_FREG_D_OPERATION_RESULT(reg, value, intended_type) \
 do { \
@@ -210,14 +293,17 @@ do { \
   const transprecision_type_t __tp_freg_intended_type = (intended_type); \
   const auto __tp_freg_classification = \
       classify_transprecision_fp64_operation_result( \
-          __tp_freg_wdata.v, __tp_freg_intended_type); \
-  WRITE_FREG((reg), __tp_freg_wdata); \
+          __tp_freg_wdata.v, __tp_freg_intended_type, \
+          p->get_cfg().transprecision_policy); \
+  WRITE_FREG((reg), f64(__tp_freg_classification.selected_bits)); \
   STATE.FPR_TAGS.write((reg), __tp_freg_classification.type); \
   STATE.transprecision_counters.record_write_tag( \
       __tp_freg_classification.type); \
   STATE.transprecision_counters.record_operation_result( \
       transprecision_value_class_bucket(__tp_freg_classification.value_class), \
-      __tp_freg_intended_type, __tp_freg_classification.type); \
+      __tp_freg_intended_type, __tp_freg_classification.type, \
+      __tp_freg_classification.value_was_masked, \
+      __tp_freg_classification.masked_to_zero); \
 } while (0)
 #define WRITE_FRD_F_ARCHITECTURAL(value) \
 do { \
@@ -234,6 +320,14 @@ do { \
     WRITE_FRD_D(__tp_arch_wdata); \
   else \
     WRITE_FREG_D_ARCHITECTURAL(insn.rd(), __tp_arch_wdata); \
+} while (0)
+#define WRITE_FRD_D_LOAD_ARCHITECTURAL(value) \
+do { \
+  auto __tp_arch_load_wdata = (value); \
+  if (p->extension_enabled(EXT_ZFINX)) \
+    WRITE_FRD_D(__tp_arch_load_wdata); \
+  else \
+    WRITE_FREG_D_LOAD_ARCHITECTURAL(insn.rd(), __tp_arch_load_wdata); \
 } while (0)
 #define WRITE_FRD_F_OPERATION_RESULT(value, intended_type) \
 do { \
@@ -259,6 +353,8 @@ do { \
   WRITE_FREG_F_ARCHITECTURAL(insn.rvc_rs2s(), value)
 #define WRITE_RVC_FRS2S_D_ARCHITECTURAL(value) \
   WRITE_FREG_D_ARCHITECTURAL(insn.rvc_rs2s(), value)
+#define WRITE_RVC_FRS2S_D_LOAD_ARCHITECTURAL(value) \
+  WRITE_FREG_D_LOAD_ARCHITECTURAL(insn.rvc_rs2s(), value)
 #define WRITE_FRD_H(value) \
 do { \
   if (p->extension_enabled(EXT_ZFINX)) \

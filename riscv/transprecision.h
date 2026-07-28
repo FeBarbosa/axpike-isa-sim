@@ -20,6 +20,24 @@ enum class transprecision_type_t : uint8_t
 static const size_t transprecision_type_bucket_count = 5;
 static const size_t transprecision_value_class_bucket_count = 4;
 
+struct transprecision_policy_config_t
+{
+  uint8_t fp32_to_e5m2_protected_bits;
+  uint8_t fp32_to_fp16_protected_bits;
+  uint8_t fp64_to_e5m2_protected_bits;
+  uint8_t fp64_to_fp16_protected_bits;
+  uint8_t fp64_to_fp32_protected_bits;
+
+  transprecision_policy_config_t()
+    : fp32_to_e5m2_protected_bits(21),
+      fp32_to_fp16_protected_bits(13),
+      fp64_to_e5m2_protected_bits(50),
+      fp64_to_fp16_protected_bits(42),
+      fp64_to_fp32_protected_bits(29)
+  {
+  }
+};
+
 template <size_t N>
 class transprecision_tag_file_t
 {
@@ -46,6 +64,59 @@ public:
 
 private:
   std::array<transprecision_type_t, N> tags;
+};
+
+enum class transprecision_fp64_load_boxing_state_t : uint8_t
+{
+  NONE = 0,
+  NAN_BOXED_FP32_CANDIDATE,
+  NAN_BOXED_FP32_CONFIRMED,
+};
+
+template <size_t N>
+class transprecision_fp64_load_boxing_file_t
+{
+public:
+  transprecision_fp64_load_boxing_file_t()
+  {
+    reset();
+  }
+
+  void reset()
+  {
+    states.fill(transprecision_fp64_load_boxing_state_t::NONE);
+  }
+
+  transprecision_fp64_load_boxing_state_t read(size_t index) const
+  {
+    return states[index];
+  }
+
+  void clear(size_t index)
+  {
+    states[index] = transprecision_fp64_load_boxing_state_t::NONE;
+  }
+
+  void mark_candidate(size_t index, bool is_candidate)
+  {
+    states[index] = is_candidate
+        ? transprecision_fp64_load_boxing_state_t::NAN_BOXED_FP32_CANDIDATE
+        : transprecision_fp64_load_boxing_state_t::NONE;
+  }
+
+  bool confirm_fp32_read(size_t index)
+  {
+    if (states[index]
+        != transprecision_fp64_load_boxing_state_t::NAN_BOXED_FP32_CANDIDATE)
+      return false;
+
+    states[index] =
+        transprecision_fp64_load_boxing_state_t::NAN_BOXED_FP32_CONFIRMED;
+    return true;
+  }
+
+private:
+  std::array<transprecision_fp64_load_boxing_state_t, N> states;
 };
 
 static inline bool transprecision_is_supported_type(transprecision_type_t type)
@@ -133,13 +204,25 @@ struct transprecision_counters_t
   std::vector<std::array<uint64_t, transprecision_type_bucket_count> >
       effective_type_by_instruction;
   std::array<std::array<uint64_t, transprecision_type_bucket_count>,
-      transprecision_type_bucket_count> promotion_from_to;
+      transprecision_type_bucket_count> operand_promotion_from_to;
   std::array<std::array<uint64_t, transprecision_type_bucket_count>,
-      transprecision_type_bucket_count> result_narrow_from_to;
+      transprecision_type_bucket_count> result_promotion_from_to;
+  std::array<std::array<uint64_t, transprecision_type_bucket_count>,
+      transprecision_type_bucket_count> result_demotion_exact_from_to;
+  std::array<std::array<uint64_t, transprecision_type_bucket_count>,
+      transprecision_type_bucket_count> result_demotion_masked_from_to;
+  std::array<std::array<uint64_t, transprecision_type_bucket_count>,
+      transprecision_type_bucket_count> external_write_masked_from_to;
   std::array<uint64_t, transprecision_value_class_bucket_count>
       operation_result_class_total;
+  std::array<uint64_t, transprecision_value_class_bucket_count>
+      external_write_class_total;
   std::array<uint64_t, transprecision_type_bucket_count> write_tag_total;
+  uint64_t masked_to_zero_total;
+  uint64_t lazy_reclassification_total;
+  uint64_t unclassified_fallback_total;
   uint64_t operand_unclassified_total;
+  uint64_t fp64_load_nan_boxed_fp32_effective_total;
 
   transprecision_counters_t()
   {
@@ -154,13 +237,36 @@ struct transprecision_counters_t
         std::array<uint64_t, transprecision_type_bucket_count>());
     for (auto& row : effective_type_by_instruction)
       row.fill(0);
-    for (auto& row : promotion_from_to)
+    for (auto& row : operand_promotion_from_to)
       row.fill(0);
-    for (auto& row : result_narrow_from_to)
+    for (auto& row : result_promotion_from_to)
+      row.fill(0);
+    for (auto& row : result_demotion_exact_from_to)
+      row.fill(0);
+    for (auto& row : result_demotion_masked_from_to)
+      row.fill(0);
+    for (auto& row : external_write_masked_from_to)
       row.fill(0);
     operation_result_class_total.fill(0);
+    external_write_class_total.fill(0);
     write_tag_total.fill(0);
+    masked_to_zero_total = 0;
+    lazy_reclassification_total = 0;
+    unclassified_fallback_total = 0;
     operand_unclassified_total = 0;
+    fp64_load_nan_boxed_fp32_effective_total = 0;
+  }
+
+  void record_lazy_reclassification(bool used_fallback)
+  {
+    lazy_reclassification_total++;
+    if (used_fallback)
+      unclassified_fallback_total++;
+  }
+
+  void record_fp64_load_nan_boxed_fp32_effective()
+  {
+    fp64_load_nan_boxed_fp32_effective_total++;
   }
 
   void record_effective_type(uint32_t instruction_id,
@@ -178,7 +284,7 @@ struct transprecision_counters_t
       if (operand_type == transprecision_type_t::UNCLASSIFIED)
         operand_unclassified_total++;
       if (transprecision_type_less_than(operand_type, effective_type)) {
-        promotion_from_to[transprecision_type_bucket(operand_type)]
+        operand_promotion_from_to[transprecision_type_bucket(operand_type)]
             [effective_bucket]++;
       }
     }
@@ -189,15 +295,39 @@ struct transprecision_counters_t
     write_tag_total[transprecision_type_bucket(tag)]++;
   }
 
+  void record_external_write(uint8_t value_class_bucket,
+      transprecision_type_t carrier_type, transprecision_type_t result_tag,
+      bool value_was_masked, bool masked_to_zero)
+  {
+    if (value_class_bucket < external_write_class_total.size())
+      external_write_class_total[value_class_bucket]++;
+    if (value_was_masked
+        && transprecision_type_less_than(result_tag, carrier_type)) {
+      external_write_masked_from_to[transprecision_type_bucket(carrier_type)]
+          [transprecision_type_bucket(result_tag)]++;
+    }
+    if (masked_to_zero)
+      masked_to_zero_total++;
+  }
+
   void record_operation_result(uint8_t value_class_bucket,
-      transprecision_type_t effective_type, transprecision_type_t result_tag)
+      transprecision_type_t effective_type, transprecision_type_t result_tag,
+      bool value_was_masked, bool masked_to_zero)
   {
     if (value_class_bucket < operation_result_class_total.size())
       operation_result_class_total[value_class_bucket]++;
     if (transprecision_type_less_than(result_tag, effective_type)) {
-      result_narrow_from_to[transprecision_type_bucket(effective_type)]
+      auto& demotion_counters = value_was_masked
+          ? result_demotion_masked_from_to
+          : result_demotion_exact_from_to;
+      demotion_counters[transprecision_type_bucket(effective_type)]
           [transprecision_type_bucket(result_tag)]++;
     }
+    else if (transprecision_type_less_than(effective_type, result_tag))
+      result_promotion_from_to[transprecision_type_bucket(effective_type)]
+          [transprecision_type_bucket(result_tag)]++;
+    if (masked_to_zero)
+      masked_to_zero_total++;
   }
 };
 

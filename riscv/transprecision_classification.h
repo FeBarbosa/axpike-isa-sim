@@ -49,17 +49,42 @@ struct transprecision_classification_t
 {
   transprecision_type_t type;
   transprecision_value_class_t value_class;
+  uint64_t selected_bits;
+  bool value_was_masked;
+  bool masked_to_zero;
 };
 
-transprecision_classification_t classify_transprecision_fp32(uint32_t bits);
-transprecision_classification_t classify_transprecision_fp64(uint64_t bits);
+struct transprecision_fp64_load_classification_t
+{
+  bool nan_boxed_fp32_candidate;
+  transprecision_value_class_t fp32_payload_value_class;
+};
+
+transprecision_classification_t classify_transprecision_fp32(uint32_t bits,
+    const transprecision_policy_config_t& policy =
+        transprecision_policy_config_t());
+transprecision_classification_t classify_transprecision_fp64(uint64_t bits,
+    const transprecision_policy_config_t& policy =
+        transprecision_policy_config_t());
 transprecision_classification_t classify_transprecision_fp32_operation_result(
-    uint32_t bits, transprecision_type_t intended_execution_type);
+    uint32_t bits, transprecision_type_t intended_execution_type,
+    const transprecision_policy_config_t& policy =
+        transprecision_policy_config_t());
 transprecision_classification_t classify_transprecision_fp64_operation_result(
-    uint64_t bits, transprecision_type_t intended_execution_type);
+    uint64_t bits, transprecision_type_t intended_execution_type,
+    const transprecision_policy_config_t& policy =
+        transprecision_policy_config_t());
 transprecision_classification_t classify_transprecision_fp32_architectural_write(
-    uint32_t bits);
+    uint32_t bits, const transprecision_policy_config_t& policy =
+        transprecision_policy_config_t());
 transprecision_classification_t classify_transprecision_fp64_architectural_write(
-    uint64_t bits);
+    uint64_t bits, const transprecision_policy_config_t& policy =
+        transprecision_policy_config_t());
+transprecision_fp64_load_classification_t
+classify_transprecision_fp64_load(uint64_t bits);
+
+void trace_transprecision_external_nan(uint8_t carrier_bits, uint64_t bits,
+    size_t destination_register, uint32_t instruction_id, uint64_t pc,
+    uint64_t raw_instruction);
 
 #endif

@@ -19,7 +19,18 @@ FP64 arithmetic result with a bit-accurate reduced-precision result. Reduced
 types are used to classify operands, select an intended execution type,
 reclassify write-back values, and count promotion/demotion opportunities.
 
-This phase is an implementation and instrumentation effort. It does not evaluate the later research demotion/promotion policy based on active mantissa bits and does not predict RTL cost, performance, area, latency, or energy consumption.
+Version 1.0 remains the exact-representability baseline described by this
+document. A subsequent implementation now supports the protected mantissa-bit
+parameters for all five FP32/FP64 carrier-to-candidate transitions and
+propagates accepted masked values through architectural write-back. This does
+not change the definition of the version-1 baseline and is not yet the complete
+active-mantissa experiment workflow.
+
+This phase is an implementation and instrumentation effort. The complete
+active-mantissa demotion policy is defined separately in
+[`active_mantissa_policy_contract.md`](active_mantissa_policy_contract.md), and
+it does not predict RTL cost, performance, area, latency, or energy
+consumption.
 
 ## Scope
 
@@ -30,7 +41,10 @@ Version 1.0 supports the following types in ascending selection precedence:
 3. `FP32`
 4. `FP64`
 
-Other reduced types may be integrated after version 1.0. This initial set was selected to simplify and accelerate development while preserving a strict precedence in which each type has greater range and precision than the previous type.
+Other candidate formats may be integrated after version 1.0. This initial set
+was selected to simplify and accelerate development while preserving a strict
+precedence in which each format has greater range and precision than the
+previous format.
 
 The implementation covers scalar FP32 and FP64 instruction paths that read from
 or write to the floating-point register file, including loads, stores,
@@ -50,15 +64,19 @@ the transprecision-aware floating-point write macros.
 
 ## Exact Representability
 
-A value is exactly representable in a candidate type when the following round trip preserves its original architectural bit pattern:
+A value is exactly representable in a candidate format when the following round
+trip preserves its original architectural bit pattern:
 
 ```text
     **architectural FP32/FP64 value**
-    -> conversion to the candidate reduced type (FlexFloat)
+    -> conversion to the candidate format (FlexFloat)
     -> conversion back to the **architectural FP32/FP64 value**
 ```
 
-Candidate types are tested in selection-precedence order. If the bit patterns differ, the next type is evaluated. NaN, infinity, signed zero, and subnormal values follow the special-value policy defined below rather than relying only on the finite-normal comparison rule.
+Candidate formats are tested in selection-precedence order. If the bit patterns
+differ, the next format is evaluated. NaN, infinity, signed zero, and subnormal
+values follow the special-value policy defined below rather than relying only on
+the finite-normal comparison rule.
 
 ## Instruction Classification
 
@@ -79,8 +97,8 @@ converted result using the normal transprecision result-classification policy.
 
 The arithmetic operation itself continues to be executed by Spike using its
 original architectural FP32 or FP64 implementation. Version 1.0 does not execute
-a bit-accurate `E5M2` or `FP16` arithmetic operation. Reduced-type behavior is
-inferred by classifying the architectural result through the transprecision
+a bit-accurate `E5M2` or `FP16` arithmetic operation. Candidate-format behavior
+is inferred by classifying the architectural result through the transprecision
 write macros.
 
 The intended execution type is recorded once per instruction by the effective
@@ -102,20 +120,19 @@ classification policy.
 For finite non-zero results, the destination register receives the smallest
 supported tag that represents the architectural result exactly. If this tag is
 smaller than the intended execution type for the instruction that produced the
-value, the transition is recorded by `result_narrow_from_to`.
+value, the transition is recorded as an exact result demotion.
 
 The current implementation does not yet store a rounded reduced-precision value
 when the architectural result is inexact for the intended execution type. It
 preserves the Spike architectural result and records the destination tag selected
 by the exact-representability classifier. This means version 1.0 currently
 supports analysis of dynamic tags, instruction classification, operand
-promotion, and result narrowing opportunities, but not a full numerical
+promotion, and exact result-demotion opportunities, but not a full numerical
 simulation of reduced-precision arithmetic.
 
-Promotion of result values caused by inexactness, exponent range overflow, or
-mantissa precision loss is not yet counted separately. These counters are
-required before the next experiment, where promotion/demotion policies will be
-based on tolerated least-significant mantissa bits.
+Result promotions are counted by operation type and selected result tag.
+Candidate-specific causes such as exponent range or mantissa precision are not
+reported separately because they are internal to candidate selection.
 
 ## Range Events And Special Values
 
@@ -126,8 +143,8 @@ original FP32 or FP64 Spike operation.
 
 For example, if Spike produces a finite FP32 result and conversion to `E5M2`
 would produce positive infinity, the event should be recorded as an `E5M2` range
-overflow. The current implementation does not yet expose dedicated overflow or
-underflow counters for reduced transprecision types.
+overflow during focused validation. The full-application experiment does not
+expose dedicated overflow or underflow counters for candidate formats.
 
 The infrastructure must distinguish:
 
@@ -138,12 +155,16 @@ The infrastructure must distinguish:
 - an IEEE 754 underflow flag, when provided by the underlying implementation.
 
 If version 1.0 cannot reproduce the complete IEEE 754 underflow semantics for a
-reduced format, it must report the inferred event explicitly as a reduced-format
-range event rather than claiming bit-accurate reproduction of the IEEE 754 flag.
-These event counters remain to be implemented before the next experiment.
+candidate format, it must report the inferred event explicitly as a
+candidate-format range event rather than claiming bit-accurate reproduction of
+the IEEE 754 flag. These event counters remain to be implemented before the next
+experiment.
 
 Special values use contextual tag assignment because their bit patterns do not
 always identify the precision context that produced or introduced them.
+The following rules are shared by the exact baseline and the dynamic
+active-mantissa policy. The complete experiment contract is recorded in
+[`active_mantissa_policy_contract.md`](active_mantissa_policy_contract.md).
 
 For values produced by FP operations:
 
@@ -157,14 +178,16 @@ For architectural writes external to the FP ALU, including FP loads:
 - finite non-zero values receive the smallest supported tag that represents the
   value exactly;
 - `+0` and `-0` receive the smallest supported tag, currently `E5M2`;
-- infinities and NaNs receive the architectural type of the write.
+- infinities and NaNs preserve their architectural bit pattern and receive
+  `E5M2`.
 
 The signed-zero rule is intentionally generalized across operation results and
 external architectural writes: both `+0` and `-0` are exactly representable in
 all supported formats, so version 1.0 tags them with the smallest available
 type. Infinities and NaNs keep contextual precision information instead:
 operation results preserve the type in which the event was inferred, while
-external writes preserve the architectural source type.
+external writes receive `E5M2` because no operation type is available. Their
+sign and payload do not participate in format selection.
 
 Subnormal handling initially follows the simplest behavior compatible with the existing AxPIKE, Spike, and FlexFloat conversion paths. The observed policy, including whether subnormals are preserved or flushed to zero, must be established by implementation-level validation.
 
@@ -177,10 +200,13 @@ At the end of an application execution, the current infrastructure reports:
 - the number and proportion of instructions classified as `E5M2`, `FP16`, `FP32`, and `FP64`;
 - operand promotions caused by a smaller operand tag being promoted to the
   instruction's intended execution type;
-- result narrowing from the intended execution type to a smaller destination tag;
+- exact and masked result demotions from the intended execution type to a
+  smaller destination tag;
+- result promotions to a larger destination tag;
 - generated result classes: finite, zero, infinity, and NaN;
 - destination write-tag totals;
-- operand observations that contain `UNCLASSIFIED`.
+- lazy metadata recoveries and carrier fallbacks; and
+- any operand observations that remain `UNCLASSIFIED` after recovery.
 
 The transprecision CSV currently uses the columns:
 
@@ -190,35 +216,51 @@ The transprecision CSV currently uses the columns:
 
 The implemented categories are:
 
+- `policy_protected_bits`: the five effective protected widths, indexed by
+  architectural carrier and candidate format;
 - `transprecision_effective_type_observations`: total number of effective-type
   observations;
 - `last_transprecision_effective_type`: last observed effective type, useful as
   a debug/status row rather than as a numeric metric;
-- `operand_unclassified_total`: number of observed operands whose tag was
-  `UNCLASSIFIED`;
+- `operand_unclassified_total`: number of operands still observed as
+  `UNCLASSIFIED` after lazy recovery; covered scalar FP32/FP64 paths should
+  report zero;
 - `effective_type_total`: total observations by intended execution type;
 - `write_tag_total`: destination tag totals, including architectural writes such
   as FP loads and integer-to-FP moves/conversions;
 - `operation_result_class_total`: finite, zero, infinity, and NaN result
   classes for operation-result write macros;
-- `promotion_from_to`: operand promotions from a smaller operand tag to the
+- `operand_promotion_from_to`: operand promotions from a smaller operand tag to the
   instruction's intended execution type;
-- `result_narrow_from_to`: cases where the result tag is smaller than the
+- `result_promotion_from_to`: cases where the result tag is larger than the
   intended execution type;
+- `result_demotion_exact_from_to`: cases where the result tag is smaller and
+  the selected value is bit-for-bit equal to the architectural result;
+- `result_demotion_masked_from_to`: cases where the result tag is smaller and
+  the propagated value differs from the architectural result;
+- `external_write_class_total`: finite, zero, infinity, and NaN classes
+  observed on external architectural writes;
+- `external_write_masked_from_to`: external writes whose selected masked value
+  differs from the incoming architectural value, indexed by carrier and
+  selected format;
+- `masked_to_zero_total`: nonzero values changed to signed zero by masking;
+- `lazy_reclassification_total`: FPR reads that found missing metadata and
+  recovered a tag using exact classification without changing the value;
+- `unclassified_fallback_total`: lazy recoveries for which exact
+  classification did not return a supported tag and the architectural carrier
+  was assigned conservatively;
+- `fp64_load_nan_boxed_fp32_effective_total`: FP64 load results with an
+  all-ones upper 32-bit word that were subsequently consumed by a typed FP32
+  FPR read, counted once per loaded value without changing its bits or tag;
 - `effective_type_by_instruction`: intended execution type distribution per
   instruction.
 
-The following counters are not implemented yet and must be added before the
-mantissa-bit promotion/demotion experiment:
-
-- inexact result counts by intended execution type and destination type;
-- reduced-format overflow counts by intended execution type;
-- reduced-format underflow counts by intended execution type;
-- result promotions caused by exponent range or mantissa precision loss;
-- exact demotions versus approximate/tolerated demotions;
-- values accepted by mantissa-bit tolerance;
-- values rejected because the exponent is outside the candidate type range;
-- values rejected because mantissa loss exceeds the configured tolerance.
+The active-mantissa experiment intentionally does not report candidate
+rejection counts. Range, precision, and round-trip rejection are internal
+reasons for continuing the candidate search; the scientific output is the
+selected format and its promotion or demotion relative to the operation type.
+Candidate-format range and subnormal behavior remain subject to focused
+implementation validation rather than dedicated full-application counters.
 
 Instruction execution counters and result-value counters are separate. A write classification must not increment an instruction execution counter.
 
@@ -229,13 +271,18 @@ Instruction execution counters and result-value counters are separate. A write c
   operands to use a common type.
 - **Result promotion**: Classifying a result with a larger tag because the
   intended execution type cannot represent it according to the active
-  classification policy. This is not yet implemented as a dedicated counter.
+  classification policy.
 - **Promotion**: General term for classifying or converting a value to a higher-precision floating-point type because the current type cannot represent it exactly or because an instruction requires its operands to use a common type.
   - *Range-driven promotion*: the current type lacks sufficient exponent range.
   - *Precision-driven promotion*: the significand lacks sufficient precision despite sufficient exponent range.
 - **Result narrowing**: Current implemented counter for cases where the result
   tag is smaller than the intended execution type.
-- **Demotion**: Classifying or converting a value to a lower-precision floating-point type when the active classification policy permits the transition. In version 1.0 this means exact representability; in the next experiment it will include the configured mantissa-bit tolerance.
+- **Demotion**: Classifying or converting a value to a lower-precision
+  floating-point type when the active classification policy permits the
+  transition. In version 1.0 this means exact representability. In the next
+  experiment, it means exact representability after clearing the configured
+  least-significant mantissa window, with the masked value propagated to later
+  instructions.
 - **Intended execution type**: The common type selected from the operand tags for classifying an instruction and interpreting its result.
 - **Architectural type**: The FP32 or FP64 type determined by the original Spike instruction and register access.
   Architectural type also remains the physical representation stored by Spike in
@@ -253,11 +300,13 @@ Because reduced operations are not executed by a bit-accurate reduced arithmetic
 unit, conclusions about reduced hardware behavior must remain within this
 limitation. The current results support claims about dynamic value
 classification, tag propagation, instruction-type distribution, and observed
-opportunities for operand promotion/result narrowing.
+opportunities for operand promotion and result promotion/demotion.
 
 ## Implementation Mapping
 
 - Persistent per-FPR tags are stored in `state_t::FPR_TAGS`.
+- Transient FP64-load NaN-boxing context is stored separately from precision
+  tags and is cleared by any subsequent FPR write.
 - Tags and transprecision counters are reset in `state_t::reset`.
 - Effective-type selection, observation, architectural writes, and operation
   result writes are implemented in `riscv/decode_macros.h`.
@@ -274,14 +323,17 @@ opportunities for operand promotion/result narrowing.
 
 ## Known Limitations Before The Next Experiment
 
-- Dedicated inexact, overflow, underflow, and result-promotion counters are not
-  implemented yet.
-- The mantissa-bit tolerance policy is not implemented yet; version 1.0 uses
-  exact representability for finite non-zero values.
+- The finite-value active-mantissa classification core supports all five
+  carrier/candidate transitions and command-line configuration. The
+  experiment-matrix generator, lazy metadata recovery, and contextual
+  special-value behavior are also implemented and covered by focused tests.
+  Reduced application validation and counter-invariant checks are still
+  required before scientific evaluation.
 - Reduced arithmetic is not bit-accurate; Spike still computes the architectural
   FP32 or FP64 result.
-- The stored architectural result is not currently replaced by a rounded
-  reduced-precision value.
+- The version-1 exact baseline preserves the architectural result. The active
+  mantissa policy instead propagates the accepted masked carrier value; it does
+  not emulate candidate-format arithmetic.
 - `write_tag_total` includes writes that are not instruction effective-type
   observations, such as FP loads and integer-to-FP writes. It must not be
   interpreted as an instruction execution counter.
@@ -289,4 +341,4 @@ opportunities for operand promotion/result narrowing.
   registers instead of the floating-point register file. Version 1.0 is focused
   on the traditional floating-point register file path.
 - Subnormal behavior still needs focused validation before making claims about
-  reduced-format underflow semantics.
+  candidate-format underflow semantics.

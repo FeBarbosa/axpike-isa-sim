@@ -1,5 +1,7 @@
 require_either_extension('D', EXT_ZDINX);
 require_fp;
+(void) FRS1_D;
+(void) FRS2_D;
 OBSERVE_FRS1_FRS2_EFFECTIVE_TYPE();
 WRITE_RD(f64_eq(FRS1_D, FRS2_D));
 set_fp_exceptions;

@@ -5,6 +5,7 @@
 #include <optional>
 #include <vector>
 #include "decode.h"
+#include "transprecision.h"
 #include <cassert>
 
 typedef enum {
@@ -77,9 +78,13 @@ public:
   bool                    explicit_hartids;
   bool                    real_time_clint;
   reg_t                   trigger_count;
+  transprecision_policy_config_t transprecision_policy;
 
   size_t nprocs() const { return hartids.size(); }
   size_t max_hartid() const { return hartids.back(); }
 };
+
+transprecision_policy_config_t parse_transprecision_policy_config(
+    const char* argument);
 
 #endif
