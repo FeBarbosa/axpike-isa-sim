@@ -70,6 +70,135 @@ outputs locally.
 Runner scripts for larger validation stages:
 
 - `run_fp16_exhaustive_compare.py`
+- `generate_transprecision_experiment_matrix.py`
+- `prepare_reduced_mnist_fixture.py`
+- `run_reduced_lenet_validation.py`
+- `summarize_reduced_lenet_validation.py`
+- `plot_reduced_lenet_validation.py`
+
+## Transprecision Experiment Matrix
+
+`scripts/generate_transprecision_experiment_matrix.py` expands the three
+approved protected-bit parameterizations:
+
+- proportional protection at `1.00`, `0.75`, `0.50`, `0.25`, and `0.00`;
+- every protected width for one transition at a time while the others remain
+  exact; and
+- every global absolute width from 0 through 50, saturated at each transition
+  limit.
+
+The generator deduplicates complete protected-width vectors while retaining
+every parameterization that maps to each vector. Its JSON manifest contains a
+stable vector-derived identifier, the complete AxPIKE CLI argument, and the
+parameterization aliases. The three fixed controls are recorded separately
+because their execution configuration is outside the protected-bit vector.
+
+Generate the manifest with:
+
+```bash
+python3 verification/scripts/generate_transprecision_experiment_matrix.py \
+  --output verification/out/transprecision-experiment-matrix.json
+```
+
+The generator validates the approved counts internally: 216
+parameterization-level points, 201 unique dynamic configurations, and 204
+full-application runs after adding the three fixed controls.
+
+Run its focused tests with:
+
+```bash
+python3 -m unittest \
+  verification/tests/test_transprecision_experiment_matrix.py
+```
+
+These tests validate matrix construction and reproducibility only. They do not
+execute AxPIKE or establish application-level numerical correctness.
+
+## Focused Transprecision Validation
+
+The simulator-side focused suite can be rebuilt and executed from an existing
+configured build directory with:
+
+```bash
+cd build
+make -j2 \
+  transprecision-tags-utst \
+  transprecision-operands-utst \
+  transprecision-classification-utst \
+  transprecision-write-macros-utst \
+  transprecision-fp-execution-utst
+./transprecision-tags-utst
+./transprecision-operands-utst
+./transprecision-classification-utst
+./transprecision-write-macros-utst
+./transprecision-fp-execution-utst
+```
+
+The suite covers tag state, effective-type selection, protected-bit
+classification, persistent masked writes, contextual special values, separate
+external/operation value-class counters, metadata recovery, and representative
+instruction execution. Special-value checks require preservation of infinity
+and NaN architectural bits, including NaN sign and payload, without recording a
+masked value or a result promotion/demotion. Directed FP64-load NaN-boxing
+checks also cover structural candidate detection, no confirmation on typed FP64
+reads, one-time confirmation on typed FP32 reads, repeated reads, and overwrite
+invalidation.
+
+Passing this suite is implementation validation only. It does not replace the
+reduced application run, counter-invariant checks, deterministic replay, or the
+full scientific evaluation.
+
+The deterministic reduced-LeNet diagnosis and effective-confirmation result are
+recorded in
+`reports/lenet_reduced_external_nan_diagnosis.md`.
+
+The completed reduced deterministic validation, counter invariants, replay
+hashes, and example-figure boundary are recorded in
+`reports/lenet_reduced_deterministic_validation.md`.
+
+Prepare and run this validation with:
+
+```bash
+python3 verification/scripts/prepare_reduced_mnist_fixture.py \
+  --source-directory lenet-riscv-cpp-inference/data \
+  --output-directory verification/out/mnist-prefix59-v1
+
+python3 verification/scripts/run_reduced_lenet_validation.py \
+  --axpike build/axpike \
+  --application lenet-riscv-cpp-inference/build/bin/app \
+  --data-directory verification/out/mnist-prefix59-v1 \
+  --output-directory verification/out/lenet-reduced-validation-v3
+
+python3 verification/scripts/summarize_reduced_lenet_validation.py \
+  --manifest \
+    verification/out/lenet-reduced-validation-v3/run-manifest.json \
+  --output-directory \
+    verification/out/lenet-reduced-validation-v3-summary
+
+python3 verification/scripts/plot_reduced_lenet_validation.py \
+  --summary \
+    verification/out/lenet-reduced-validation-v3-summary/summary.json \
+  --output-directory \
+    verification/out/lenet-reduced-validation-v3-figures \
+  --pdf
+```
+
+The runner intentionally executes only the exact and combined no-protection
+endpoints over the deterministic 59-image prefix. The summarizer checks outcome
+partitioning, policy identity, the effective-type partition, zero unclassified
+types/operands, zero fallback events, and
+`fp64_load_nan_boxed_fp32_effective_total <=
+external_write_class_total[NAN]`. Passing these checks supports reduced
+implementation and simulator-model validation only; it does not replace the
+10,000-image scientific matrix.
+
+Run the focused automation tests with:
+
+```bash
+python3 -m unittest \
+  verification/tests/test_transprecision_experiment_matrix.py \
+  verification/tests/test_reduced_lenet_validation.py
+```
 
 ## Hook-Only FP16 Lowprecision Test
 

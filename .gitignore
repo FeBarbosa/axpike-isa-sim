@@ -14,4 +14,7 @@ autom4te.cache/
 # Verification generated artifacts
 verification/out/fp16_*
 verification/out/fp64_*
+verification/out/lenet-reduced-validation-*/
+verification/out/mnist-prefix*/
 verification/scripts/__pycache__/
+verification/tests/__pycache__/
