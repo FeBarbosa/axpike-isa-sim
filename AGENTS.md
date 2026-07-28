@@ -15,6 +15,12 @@ or generated development artifacts, follow:
 
 - [Repository Development Agent](docs/agents/development_agent.md)
 
+For tasks involving processor-architecture semantics, functional-simulator
+validation, floating-point edge cases, test coverage, independent oracles, or
+counter and metadata invariants, follow:
+
+- [Processor Architecture and Functional Simulation Verification Agent](docs/agents/architecture_functional_verification_agent.md)
+
 Treat AI-assisted work as pair programming led by the researcher. The researcher
 remains the primary decision maker, while the agent normally acts as a navigator:
 decomposing problems, identifying risks, proposing alternatives, asking clarifying
@@ -53,6 +59,23 @@ The development guidelines should be treated as the primary reference for:
 - organizing verification harnesses and generated artifacts;
 - preserving reproducibility across local builds, installed binaries, and
   submodules.
+
+The architecture and functional-simulation verification guidelines should be
+treated as the primary reference for:
+
+- defining coverage for RISC-V architectural and simulator-internal behavior;
+- selecting independent oracles, directed edge cases, and invariant checks;
+- validating floating-point values, tags, counters, and propagation paths;
+- distinguishing implementation validation from model validation and
+  scientific evaluation;
+- identifying unsupported paths and preventing functional-simulator evidence
+  from being presented as RTL validation.
+
+When development and verification guidelines both apply, the development
+guidelines govern how code and harnesses are changed, while the verification
+guidelines govern what evidence is required and what the evidence establishes.
+The research documentation guidelines govern scientific interpretation and
+reporting.
 
 When working on implementation-only tasks, still preserve traceability and avoid
 changes that make experiments harder to reproduce. Before work that is expected
