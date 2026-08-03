@@ -1,5 +1,12 @@
 # Reduced LeNet External-NaN Diagnosis
 
+> Historical note: this report predates the effective-type quantization v3
+> statistics contract and uses the former transition-based protection policy.
+> It remains available for traceability, but its counters and policy settings
+> must not be interpreted as evidence for the current type-based contract. The
+> current reduced fixture uses the 62-image minimal prefix covering all ten
+> classes; the 59-image evidence below is intentionally preserved unchanged.
+
 This report records a focused implementation diagnosis of the 123 external
 writes classified as NaN during the deterministic, exact-policy LeNet run. It
 does not constitute scientific evaluation of the transprecision model.

@@ -115,7 +115,9 @@ def panel_accuracy(runs: list[dict[str, Any]]) -> list[str]:
                 text(
                     x + 40,
                     baseline_y + 25,
-                    "Exact" if run["id"] == "exact" else "No protection",
+                    "Full protection"
+                    if run["id"] == "full-protection"
+                    else "No protection",
                     size=12,
                 ),
             ]
@@ -185,7 +187,9 @@ def panel_effective_types(runs: list[dict[str, Any]]) -> list[str]:
             text(
                 x + 40,
                 baseline_y + 25,
-                "Exact" if run["id"] == "exact" else "No protection",
+                "Full protection"
+                if run["id"] == "full-protection"
+                else "No protection",
                 size=12,
             )
         )
@@ -207,12 +211,17 @@ def panel_effective_types(runs: list[dict[str, Any]]) -> list[str]:
     return elements
 
 
-def panel_nan_accounting(exact: dict[str, Any]) -> list[str]:
+def panel_nan_accounting(full_protection: dict[str, Any]) -> list[str]:
     offset = 800
     elements = [
-        text(offset + 200, 42, "(c) Exact-policy NaN accounting", weight="bold")
+        text(
+            offset + 200,
+            42,
+            "(c) Full-protection NaN accounting",
+            weight="bold",
+        )
     ]
-    diagnostics = exact["diagnostics"]
+    diagnostics = full_protection["diagnostics"]
     values = (
         ("External\ncarrier", diagnostics["external_nan_total"]),
         (
@@ -285,8 +294,13 @@ def panel_nan_accounting(exact: dict[str, Any]) -> list[str]:
 
 def render_svg(summary: dict[str, Any]) -> str:
     runs = summary["runs"]
-    if [run["id"] for run in runs] != ["exact", "no-protection"]:
-        raise ValueError("summary must contain exact and no-protection runs")
+    if [run["id"] for run in runs] != [
+        "full-protection",
+        "no-protection",
+    ]:
+        raise ValueError(
+            "summary must contain full-protection and no-protection runs"
+        )
     elements = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" '
         f'height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">',

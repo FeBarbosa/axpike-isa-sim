@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a deterministic MNIST test prefix while preserving IDX headers."""
+"""Prepare the smallest deterministic MNIST prefix covering all ten classes."""
 
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ from typing import Any
 
 IMAGE_MAGIC = 2051
 LABEL_MAGIC = 2049
-IMAGE_COUNT = 59
+IMAGE_COUNT = 62
+EXPECTED_CLASSES = tuple(range(10))
 TRAIN_FILES = (
     "train-images-idx3-ubyte",
     "train-labels-idx1-ubyte",
@@ -51,7 +52,7 @@ def truncate_images(source: Path, destination: Path, count: int) -> None:
         output_file.write(payload)
 
 
-def truncate_labels(source: Path, destination: Path, count: int) -> None:
+def truncate_labels(source: Path, destination: Path, count: int) -> bytes:
     with source.open("rb") as input_file:
         header = input_file.read(8)
         if len(header) != 8:
@@ -69,6 +70,7 @@ def truncate_labels(source: Path, destination: Path, count: int) -> None:
     with destination.open("wb") as output_file:
         output_file.write(struct.pack(">II", magic, count))
         output_file.write(payload)
+    return payload
 
 
 def file_record(path: Path) -> dict[str, Any]:
@@ -107,16 +109,38 @@ def prepare_fixture(
         output_directory / TEST_IMAGE_FILE,
         count,
     )
-    truncate_labels(
+    labels = truncate_labels(
         source_directory / TEST_LABEL_FILE,
         output_directory / TEST_LABEL_FILE,
         count,
     )
+    class_counts = {
+        str(label): labels.count(label)
+        for label in EXPECTED_CLASSES
+    }
+    represented_classes = [
+        label for label in EXPECTED_CLASSES if class_counts[str(label)] > 0
+    ]
+    covers_all_classes = represented_classes == list(EXPECTED_CLASSES)
+    minimal_prefix_covering_all_classes = (
+        covers_all_classes
+        and not set(EXPECTED_CLASSES).issubset(set(labels[:-1]))
+    )
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "purpose": "deterministic reduced MNIST fixture",
         "image_count": count,
+        "selection": {
+            "kind": "contiguous-test-prefix",
+            "zero_based_last_source_index": count - 1,
+            "expected_classes": list(EXPECTED_CLASSES),
+            "represented_classes": represented_classes,
+            "class_counts": class_counts,
+            "covers_all_classes": covers_all_classes,
+            "minimal_prefix_covering_all_classes":
+                minimal_prefix_covering_all_classes,
+        },
         "source_files": {
             filename: file_record(source_directory / filename)
             for filename in required_files
@@ -130,7 +154,10 @@ def prepare_fixture(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Create a deterministic 59-image MNIST IDX fixture."
+        description=(
+            "Create the deterministic 62-image MNIST IDX prefix that first "
+            "covers all ten classes."
+        )
     )
     parser.add_argument("--source-directory", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
@@ -144,6 +171,16 @@ def main() -> int:
         args.output_directory,
         args.count,
     )
+    if args.count == IMAGE_COUNT:
+        selection = manifest["selection"]
+        if (
+            not selection["covers_all_classes"]
+            or not selection["minimal_prefix_covering_all_classes"]
+        ):
+            raise ValueError(
+                "the default 62-image fixture is not the minimal prefix "
+                "covering all ten classes"
+            )
     (args.output_directory / "fixture-manifest.json").write_text(
         json.dumps(
             manifest,

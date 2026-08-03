@@ -73,25 +73,30 @@ Runner scripts for larger validation stages:
 - `generate_transprecision_experiment_matrix.py`
 - `prepare_reduced_mnist_fixture.py`
 - `run_reduced_lenet_validation.py`
+- `run_uniform_n_reduced_matrix.py`
 - `summarize_reduced_lenet_validation.py`
 - `plot_reduced_lenet_validation.py`
 
 ## Transprecision Experiment Matrix
 
-`scripts/generate_transprecision_experiment_matrix.py` expands the three
-approved protected-bit parameterizations:
+The complete pre-run methodology and claim boundaries are defined in
+[`../docs/experiments/sscad2026_uniform_n_experiment_protocol.md`](../docs/experiments/sscad2026_uniform_n_experiment_protocol.md).
 
-- proportional protection at `1.00`, `0.75`, `0.50`, `0.25`, and `0.00`;
-- every protected width for one transition at a time while the others remain
-  exact; and
-- every global absolute width from 0 through 50, saturated at each transition
-  limit.
+`scripts/generate_transprecision_experiment_matrix.py` expands the approved
+uniform saturated parameterization. One integer `n` ranges from 0 through 50.
+For each point, the generated vector is `min(n,50), min(n,21), min(n,8), 0` for
+FP64, FP32, FP16, and E5M2, respectively.
 
-The generator deduplicates complete protected-width vectors while retaining
-every parameterization that maps to each vector. Its JSON manifest contains a
-stable vector-derived identifier, the complete AxPIKE CLI argument, and the
-parameterization aliases. The three fixed controls are recorded separately
-because their execution configuration is outside the protected-bit vector.
+The JSON manifest contains the uniform `n`, a stable type-named vector
+identifier, policy name and version, the canonical type order, and the complete
+AxPIKE CLI argument. E5M2 remains explicit with its only valid width, zero.
+The matrix has 51 distinct dynamic configurations and requires no alias
+deduplication.
+
+The full-protection endpoint at `n=50` remains a dynamic configuration, not an
+original-execution baseline. The original FP32/FP64 result is recorded as a
+provenance-pending historical reference outside the generated vector matrix.
+Fixed-format FP16 and E5M2 ADF controls are outside the scoped SSCAD experiment.
 
 Generate the manifest with:
 
@@ -100,9 +105,9 @@ python3 verification/scripts/generate_transprecision_experiment_matrix.py \
   --output verification/out/transprecision-experiment-matrix.json
 ```
 
-The generator validates the approved counts internally: 216
-parameterization-level points, 201 unique dynamic configurations, and 204
-full-application runs after adding the three fixed controls.
+The generator validates 51 dynamic configurations, 51 planned new executions,
+one historical reference control, and 52 planned evaluation points. Its
+manifest schema is version 3.
 
 Run its focused tests with:
 
@@ -111,7 +116,8 @@ python3 -m unittest \
   verification/tests/test_transprecision_experiment_matrix.py
 ```
 
-These tests validate matrix construction and reproducibility only. They do not
+These tests validate matrix construction, policy identity, parameter bounds,
+saturation breakpoints, CLI generation, and reproducibility only. They do not
 execute AxPIKE or establish application-level numerical correctness.
 
 ## Focused Transprecision Validation
@@ -135,11 +141,13 @@ make -j2 \
 ```
 
 The suite covers tag state, effective-type selection, protected-bit
-classification, persistent masked writes, contextual special values, separate
-external/operation value-class counters, metadata recovery, and representative
-instruction execution. Special-value checks require preservation of infinity
-and NaN architectural bits, including NaN sign and payload, without recording a
-masked value or a result promotion/demotion. Directed FP64-load NaN-boxing
+classification, persistent selected writes, separate W-to-T quantization and
+later result-tag-reduction counters, overflow and underflow boundaries,
+subnormal propagation without mandatory zeroing, contextual special values, external/operation
+value-class counters, metadata recovery, and representative instruction
+execution. Special-value checks require preservation of infinity and NaN
+architectural bits, including NaN sign and payload, without recording a masked
+reduction or invalid result promotion. Directed FP64-load NaN-boxing
 checks also cover structural candidate detection, no confirmation on typed FP64
 reads, one-time confirmation on typed FP32 reads, repeated reads, and overwrite
 invalidation.
@@ -152,41 +160,52 @@ The deterministic reduced-LeNet diagnosis and effective-confirmation result are
 recorded in
 `reports/lenet_reduced_external_nan_diagnosis.md`.
 
-The completed reduced deterministic validation, counter invariants, replay
-hashes, and example-figure boundary are recorded in
-`reports/lenet_reduced_deterministic_validation.md`.
+The current policy-version-4 evidence is recorded in
+`reports/lenet_reduced_deterministic_validation.md`. It documents only reduced
+implementation and simulator-model validation, not the complete scientific
+matrix.
 
 Prepare and run this validation with:
 
 ```bash
 python3 verification/scripts/prepare_reduced_mnist_fixture.py \
   --source-directory lenet-riscv-cpp-inference/data \
-  --output-directory verification/out/mnist-prefix59-v1
+  --output-directory verification/out/mnist-prefix62-v1
 
 python3 verification/scripts/run_reduced_lenet_validation.py \
   --axpike build/axpike \
   --application lenet-riscv-cpp-inference/build/bin/app \
-  --data-directory verification/out/mnist-prefix59-v1 \
-  --output-directory verification/out/lenet-reduced-validation-v3
+  --data-directory verification/out/mnist-prefix62-v1 \
+  --output-directory verification/out/lenet-reduced-validation-v8
 
 python3 verification/scripts/summarize_reduced_lenet_validation.py \
   --manifest \
-    verification/out/lenet-reduced-validation-v3/run-manifest.json \
+    verification/out/lenet-reduced-validation-v8/run-manifest.json \
   --output-directory \
-    verification/out/lenet-reduced-validation-v3-summary
+    verification/out/lenet-reduced-validation-v8-summary-v4
 
 python3 verification/scripts/plot_reduced_lenet_validation.py \
   --summary \
-    verification/out/lenet-reduced-validation-v3-summary/summary.json \
+    verification/out/lenet-reduced-validation-v8-summary-v4/summary.json \
   --output-directory \
-    verification/out/lenet-reduced-validation-v3-figures \
+    verification/out/lenet-reduced-validation-v8-figures-v4 \
   --pdf
 ```
 
-The runner intentionally executes only the exact and combined no-protection
-endpoints over the deterministic 59-image prefix. The summarizer checks outcome
-partitioning, policy identity, the effective-type partition, zero unclassified
-types/operands, zero fallback events, and
+The runner intentionally executes only the full-protection and combined
+no-protection endpoints over the deterministic 62-image prefix. This is the
+smallest contiguous prefix of the standard MNIST test ordering that contains at
+least one example of every class from 0 through 9. The fixture manifest uses
+schema 2 and records the per-class counts, represented classes, last source
+index, and minimal-prefix invariant. This improves structural class coverage
+without treating the reduced fixture as a statistically representative sample.
+The runner emits
+manifest schema 3 and requires policy `effective-type-quantization-v4`; older
+artifacts are rejected. The summarizer checks outcome partitioning, policy
+identity, effective-type totals derived from per-instruction rows,
+lower-effective-type quantization bounds, overflow/underflow invariants,
+changed result-tag reductions as a subset of all tag reductions, zero invalid
+result promotions, zero unclassified types/operands, zero fallback events, and
 `fp64_load_nan_boxed_fp32_effective_total <=
 external_write_class_total[NAN]`. Passing these checks supports reduced
 implementation and simulator-model validation only; it does not replace the
@@ -197,8 +216,35 @@ Run the focused automation tests with:
 ```bash
 python3 -m unittest \
   verification/tests/test_transprecision_experiment_matrix.py \
-  verification/tests/test_reduced_lenet_validation.py
+  verification/tests/test_reduced_lenet_validation.py \
+  verification/tests/test_uniform_n_reduced_matrix.py
 ```
+
+After the two endpoint checks pass, generate and execute the resumable
+51-configuration reduced matrix with:
+
+```bash
+python3 verification/scripts/generate_transprecision_experiment_matrix.py \
+  --output verification/out/transprecision-uniform-matrix-v1.json
+
+python3 verification/scripts/run_uniform_n_reduced_matrix.py \
+  --matrix verification/out/transprecision-uniform-matrix-v1.json \
+  --axpike build/axpike \
+  --application lenet-riscv-cpp-inference/build/bin/app \
+  --data-directory verification/out/mnist-prefix62-v1 \
+  --output-directory \
+    verification/out/lenet-uniform-n-reduced-matrix-v1
+```
+
+The runner validates the immutable campaign identity before resuming. Each
+configuration uses a numbered attempt directory and is skipped only when its
+completion marker, run-record hash, every recorded artifact hash, matrix
+identity, policy vector, and invariant gate remain valid. Failed and
+interrupted attempts are preserved. The optional `--max-new-runs` argument can
+bound a session without invalidating later resumption. A complete campaign
+emits `run-manifest.json`, `summary/`, and `matrix-gate.json`; the full
+10,000-image evaluation must not start unless the matrix gate reports all 51
+configurations as passed.
 
 ## Hook-Only FP16 Lowprecision Test
 

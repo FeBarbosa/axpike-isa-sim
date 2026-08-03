@@ -12,12 +12,15 @@ from typing import Any
 
 
 EFFECTIVE_TYPES = ("E5M2", "FP16", "FP32", "FP64", "UNCLASSIFIED")
-TRANSITION_ORDER = (
-    "fp32-e5m2",
-    "fp32-fp16",
-    "fp64-e5m2",
-    "fp64-fp16",
-    "fp64-fp32",
+TYPE_ORDER = ("fp64", "fp32", "fp16", "e5m2")
+POLICY_NAME = "effective-type-quantization-v4"
+POLICY_VERSION = 4
+QUANTIZATION_PAIRS = (
+    ("FP32", "E5M2"),
+    ("FP32", "FP16"),
+    ("FP64", "E5M2"),
+    ("FP64", "FP16"),
+    ("FP64", "FP32"),
 )
 
 
@@ -103,30 +106,39 @@ def extract_run(
     if sha256(record_path) != run_entry["sha256"]:
         raise ValueError(f"run-record hash mismatch: {record_path}")
     record = read_json(record_path)
+    if record.get("schema_version") != 3:
+        raise ValueError(f"unsupported run-record schema in {record_path}")
     if record["id"] != run_entry["id"]:
         raise ValueError(f"run identifier mismatch in {record_path}")
 
     run_directory = record_path.parent
+    for artifact_name, artifact_entry in record["artifacts"].items():
+        artifact_path = run_directory / artifact_entry["path"]
+        if sha256(artifact_path) != artifact_entry["sha256"]:
+            raise ValueError(
+                f"{artifact_name} artifact hash mismatch: {artifact_path}"
+            )
     artifact = record["artifacts"]["transprecision"]
     csv_path = run_directory / artifact["path"]
-    if sha256(csv_path) != artifact["sha256"]:
-        raise ValueError(f"transprecision CSV hash mismatch: {csv_path}")
     rows = parse_transprecision_csv(csv_path)
 
+    policy_version = select_value(
+        rows,
+        "policy_version",
+        Type=POLICY_NAME,
+    )
+    if policy_version != POLICY_VERSION:
+        raise ValueError(
+            f"{record['id']}: unsupported transprecision policy version "
+            f"{policy_version}"
+        )
     observed_policy = {
-        f"{source.lower()}-{target.lower()}": select_value(
+        type_name.lower(): select_value(
             rows,
             "policy_protected_bits",
-            From=source,
-            To=target,
+            Type=type_name,
         )
-        for source, target in (
-            ("FP32", "E5M2"),
-            ("FP32", "FP16"),
-            ("FP64", "E5M2"),
-            ("FP64", "FP16"),
-            ("FP64", "FP32"),
-        )
+        for type_name in ("FP64", "FP32", "FP16", "E5M2")
     }
     expected_policy = record["protected_bits"]
     if observed_policy != expected_policy:
@@ -134,23 +146,36 @@ def extract_run(
             f"{record['id']}: CSV policy {observed_policy} does not match "
             f"run record {expected_policy}"
         )
+    if record.get("n") is not None:
+        expected_argument = (
+            "--transprecision-type-protected-bits="
+            + ",".join(
+                f"{name}:{expected_policy[name]}" for name in TYPE_ORDER
+            )
+        )
+        if record.get("command", []).count(expected_argument) != 1:
+            raise ValueError(
+                f"{record['id']}: command does not contain its policy vector"
+            )
 
+    effective_rows = [
+        row
+        for row in rows
+        if row["Category"] == "effective_type_by_instruction"
+    ]
+    if not effective_rows:
+        raise ValueError(
+            f"{record['id']}: no effective-type instruction observations"
+        )
     effective_types = {
-        effective_type: select_value(
-            rows,
-            "effective_type_total",
-            Type=effective_type,
+        effective_type: sum(
+            int(row["Value"])
+            for row in effective_rows
+            if row["Type"] == effective_type
         )
         for effective_type in EFFECTIVE_TYPES
     }
-    effective_observations = select_value(
-        rows,
-        "transprecision_effective_type_observations",
-    )
-    if sum(effective_types.values()) != effective_observations:
-        raise ValueError(
-            f"{record['id']}: effective-type sum does not match observations"
-        )
+    effective_observations = sum(effective_types.values())
     if effective_types["UNCLASSIFIED"] != 0:
         raise ValueError(f"{record['id']}: unclassified effective types remain")
 
@@ -164,7 +189,15 @@ def extract_run(
         "operand_unclassified_total": select_value(
             rows, "operand_unclassified_total"
         ),
-        "masked_to_zero_total": select_value(rows, "masked_to_zero_total"),
+        "result_tag_reduction_to_zero_total": select_value(
+            rows, "result_tag_reduction_to_zero_total"
+        ),
+        "external_write_masked_to_zero_total": select_value(
+            rows, "external_write_masked_to_zero_total"
+        ),
+        "invalid_result_promotion_total": select_value(
+            rows, "invalid_result_promotion_total"
+        ),
         "lazy_reclassification_total": select_value(
             rows, "lazy_reclassification_total"
         ),
@@ -189,6 +222,8 @@ def extract_run(
         raise ValueError(f"{record['id']}: unclassified operands remain")
     if diagnostics["unclassified_fallback_total"] != 0:
         raise ValueError(f"{record['id']}: fallback events remain")
+    if diagnostics["invalid_result_promotion_total"] != 0:
+        raise ValueError(f"{record['id']}: invalid result promotions remain")
     if (
         diagnostics["fp64_load_nan_boxed_fp32_effective_total"]
         > diagnostics["external_nan_total"]
@@ -197,19 +232,95 @@ def extract_run(
             f"{record['id']}: effective boxed-FP32 count exceeds external NaNs"
         )
 
+    quantization = {
+        category: {
+            f"{carrier.lower()}-{effective.lower()}": select_value(
+                rows,
+                category,
+                From=carrier,
+                To=effective,
+            )
+            for carrier, effective in QUANTIZATION_PAIRS
+        }
+        for category in (
+            "result_quantization_total_from_to",
+            "result_quantization_changed_from_to",
+            "result_quantization_to_zero_from_to",
+            "result_quantization_overflow_from_to",
+            "result_quantization_underflow_from_to",
+        )
+    }
+    quantization_total = sum(
+        quantization["result_quantization_total_from_to"].values()
+    )
+    operation_result_total = sum_category(
+        rows, "operation_result_class_total"
+    )
+    if quantization_total > operation_result_total:
+        raise ValueError(
+            f"{record['id']}: quantization events exceed operation results"
+        )
+    for pair in quantization["result_quantization_total_from_to"]:
+        total = quantization["result_quantization_total_from_to"][pair]
+        changed = quantization[
+            "result_quantization_changed_from_to"][pair]
+        to_zero = quantization[
+            "result_quantization_to_zero_from_to"][pair]
+        overflow = quantization[
+            "result_quantization_overflow_from_to"][pair]
+        underflow = quantization[
+            "result_quantization_underflow_from_to"][pair]
+        if (
+            changed > total
+            or overflow > changed
+            or underflow > total
+            or to_zero > changed
+            or to_zero > underflow
+            or overflow + underflow > total
+        ):
+            raise ValueError(
+                f"{record['id']}: invalid quantization partition for {pair}"
+            )
+
     transitions = {
         category: sum_category(rows, category)
         for category in (
             "operand_promotion_from_to",
-            "result_promotion_from_to",
-            "result_demotion_exact_from_to",
-            "result_demotion_masked_from_to",
+            "result_tag_reduction_total_from_to",
+            "result_tag_reduction_changed_from_to",
             "external_write_masked_from_to",
         )
     }
+    for source_index, source in enumerate(("E5M2", "FP16", "FP32", "FP64")):
+        for destination in ("E5M2", "FP16", "FP32", "FP64")[:source_index]:
+            total = select_value(
+                rows,
+                "result_tag_reduction_total_from_to",
+                From=source,
+                To=destination,
+            )
+            changed = select_value(
+                rows,
+                "result_tag_reduction_changed_from_to",
+                From=source,
+                To=destination,
+            )
+            if changed > total:
+                raise ValueError(
+                    f"{record['id']}: changed tag reductions exceed total "
+                    f"for {source.lower()}-{destination.lower()}"
+                )
+    if (
+        transitions["result_tag_reduction_changed_from_to"]
+        > transitions["result_tag_reduction_total_from_to"]
+    ):
+        raise ValueError(
+            f"{record['id']}: changed tag reductions exceed total reductions"
+        )
     accuracy = outcome["correct"] / outcome["processed"]
     return {
         "id": record["id"],
+        "n": record.get("n"),
         "label": record["label"],
         "protected_bits": expected_policy,
         "outcome": outcome,
@@ -217,6 +328,7 @@ def extract_run(
         "effective_type_observations": effective_observations,
         "effective_types": effective_types,
         "diagnostics": diagnostics,
+        "quantization": quantization,
         "transitions": transitions,
         "source": {
             "run_record": str(record_path),
@@ -229,26 +341,57 @@ def extract_run(
 
 def build_summary(manifest_path: Path) -> dict[str, Any]:
     manifest = read_json(manifest_path)
-    if manifest.get("purpose") != "reduced deterministic LeNet validation":
+    schema_version = manifest.get("schema_version")
+    if schema_version not in (3, 4):
+        raise ValueError("unsupported reduced-validation manifest schema")
+    purpose = manifest.get("purpose")
+    supported_purposes = {
+        "reduced deterministic LeNet validation",
+        "uniform-n reduced deterministic LeNet validation",
+    }
+    if purpose not in supported_purposes:
         raise ValueError("manifest is not a reduced LeNet validation manifest")
+    if tuple(manifest.get("type_order", ())) != TYPE_ORDER:
+        raise ValueError("unexpected protected-bit type order")
     runs = [
         extract_run(manifest_path.parent, run_entry)
         for run_entry in manifest["runs"]
     ]
-    if [run["id"] for run in runs] != ["exact", "no-protection"]:
-        raise ValueError("expected exact and no-protection runs in that order")
+    if purpose == "reduced deterministic LeNet validation":
+        if [run["id"] for run in runs] != [
+            "full-protection",
+            "no-protection",
+        ]:
+            raise ValueError(
+                "expected full-protection and no-protection runs in that order"
+            )
+    else:
+        if schema_version != 4:
+            raise ValueError("uniform-n reduced matrix requires manifest schema 4")
+        if len(runs) != 51 or [run["n"] for run in runs] != list(range(51)):
+            raise ValueError("uniform-n reduced matrix must contain n=0..50")
+        limits = (50, 21, 8, 0)
+        for run in runs:
+            expected = {
+                name: min(run["n"], limit)
+                for name, limit in zip(TYPE_ORDER, limits)
+            }
+            if run["protected_bits"] != expected:
+                raise ValueError(
+                    f"{run['id']}: protected bits do not match uniform n"
+                )
     if any(
         run["outcome"]["processed"] != manifest["image_count"]
         for run in runs
     ):
         raise ValueError("manifest/run image-count mismatch")
     return {
-        "schema_version": 1,
+        "schema_version": schema_version,
         "purpose": manifest["purpose"],
         "scope": manifest["scope"],
         "image_count": manifest["image_count"],
         "mode": manifest["mode"],
-        "transition_order": manifest["transition_order"],
+        "type_order": manifest["type_order"],
         "source_manifest": {
             "path": str(manifest_path.resolve()),
             "sha256": sha256(manifest_path),
@@ -257,10 +400,14 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
         "invariants": {
             "outcome_partition": "passed",
             "policy_matches_command": "passed",
-            "effective_type_partition": "passed",
+            "effective_type_totals_derived_by_instruction": "passed",
             "unclassified_effective_types_zero": "passed",
             "unclassified_operands_zero": "passed",
             "fallback_events_zero": "passed",
+            "invalid_result_promotions_zero": "passed",
+            "quantizations_not_above_operation_results": "passed",
+            "quantization_range_event_invariants": "passed",
+            "changed_tag_reductions_not_above_total": "passed",
             "effective_boxed_fp32_not_above_external_nan": "passed",
         },
     }
@@ -269,6 +416,7 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
 def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
     fields = [
         "id",
+        "n",
         "label",
         "processed",
         "correct",
@@ -279,11 +427,22 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
         "effective_fp16",
         "effective_fp32",
         "effective_fp64",
+        "result_quantization_total",
+        "result_quantization_changed",
+        "result_quantization_to_zero",
+        "result_quantization_overflow",
+        "result_quantization_underflow",
+        "operand_promotion_total",
+        "result_tag_reduction_total",
+        "result_tag_reduction_changed",
+        "external_write_masked_total",
         "external_nan_total",
         "operation_nan_total",
         "fp64_load_nan_boxed_fp32_effective_total",
         "operand_unclassified_total",
-        "masked_to_zero_total",
+        "result_tag_reduction_to_zero_total",
+        "external_write_masked_to_zero_total",
+        "invalid_result_promotion_total",
         "lazy_reclassification_total",
         "unclassified_fallback_total",
     ]
@@ -294,6 +453,7 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
             writer.writerow(
                 {
                     "id": run["id"],
+                    "n": "" if run["n"] is None else run["n"],
                     "label": run["label"],
                     **run["outcome"],
                     "accuracy": f"{run['accuracy']:.12f}",
@@ -303,6 +463,43 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
                     "effective_fp16": run["effective_types"]["FP16"],
                     "effective_fp32": run["effective_types"]["FP32"],
                     "effective_fp64": run["effective_types"]["FP64"],
+                    "result_quantization_total": sum(
+                        run["quantization"][
+                            "result_quantization_total_from_to"
+                        ].values()
+                    ),
+                    "result_quantization_changed": sum(
+                        run["quantization"][
+                            "result_quantization_changed_from_to"
+                        ].values()
+                    ),
+                    "result_quantization_to_zero": sum(
+                        run["quantization"][
+                            "result_quantization_to_zero_from_to"
+                        ].values()
+                    ),
+                    "result_quantization_overflow": sum(
+                        run["quantization"][
+                            "result_quantization_overflow_from_to"
+                        ].values()
+                    ),
+                    "result_quantization_underflow": sum(
+                        run["quantization"][
+                            "result_quantization_underflow_from_to"
+                        ].values()
+                    ),
+                    "operand_promotion_total": run["transitions"][
+                        "operand_promotion_from_to"
+                    ],
+                    "result_tag_reduction_total": run["transitions"][
+                        "result_tag_reduction_total_from_to"
+                    ],
+                    "result_tag_reduction_changed": run["transitions"][
+                        "result_tag_reduction_changed_from_to"
+                    ],
+                    "external_write_masked_total": run["transitions"][
+                        "external_write_masked_from_to"
+                    ],
                     **run["diagnostics"],
                 }
             )
@@ -331,7 +528,7 @@ def main() -> int:
     write_json(
         args.output_directory / "summary-manifest.json",
         {
-            "schema_version": 1,
+            "schema_version": summary["schema_version"],
             "source_manifest_sha256":
                 summary["source_manifest"]["sha256"],
             "artifacts": {

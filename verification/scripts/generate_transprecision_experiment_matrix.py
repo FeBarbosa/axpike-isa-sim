@@ -5,79 +5,79 @@ import argparse
 import json
 from collections import OrderedDict
 from dataclasses import dataclass
-from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 
 @dataclass(frozen=True)
-class Transition:
+class TypeParameter:
     name: str
     maximum_protected_bits: int
 
 
-TRANSITIONS = (
-    Transition("fp32-e5m2", 21),
-    Transition("fp32-fp16", 13),
-    Transition("fp64-e5m2", 50),
-    Transition("fp64-fp16", 42),
-    Transition("fp64-fp32", 29),
+TYPE_PARAMETERS = (
+    TypeParameter("fp64", 50),
+    TypeParameter("fp32", 21),
+    TypeParameter("fp16", 8),
+    TypeParameter("e5m2", 0),
 )
-EXACT_VECTOR = tuple(
-    transition.maximum_protected_bits for transition in TRANSITIONS
+FULL_PROTECTION_VECTOR = tuple(
+    parameter.maximum_protected_bits for parameter in TYPE_PARAMETERS
 )
-PROTECTION_RATIOS = (
-    ("1.00", Fraction(1, 1)),
-    ("0.75", Fraction(3, 4)),
-    ("0.50", Fraction(1, 2)),
-    ("0.25", Fraction(1, 4)),
-    ("0.00", Fraction(0, 1)),
-)
-EXPECTED_PARAMETERIZATION_POINTS = 216
-EXPECTED_DYNAMIC_CONFIGURATIONS = 201
-FIXED_CONTROLS = (
-    "original-fp32-fp64",
-    "fixed-fp16",
-    "fixed-e5m2",
+MINIMUM_UNIFORM_N = 0
+MAXIMUM_UNIFORM_N = 50
+EXPECTED_DYNAMIC_CONFIGURATIONS = 51
+POLICY_NAME = "effective-type-quantization-v4"
+POLICY_VERSION = 4
+MANIFEST_SCHEMA_VERSION = 3
+REFERENCE_CONTROLS = (
+    {
+        "id": "original-fp32-fp64",
+        "source": "historical-artifact",
+        "status": "provenance-pending",
+    },
 )
 
 ProtectedBitsVector = tuple[int, ...]
 Parameterization = dict[str, Any]
 
 
-def ceil_fraction(value: Fraction) -> int:
-    return (value.numerator + value.denominator - 1) // value.denominator
-
-
 def vector_id(vector: ProtectedBitsVector) -> str:
-    return "tp-" + "-".join(str(value) for value in vector)
+    validate_vector(vector)
+    entries = (
+        f"{parameter.name}-{value}"
+        for parameter, value in zip(TYPE_PARAMETERS, vector)
+    )
+    return "tp-" + "-".join(entries)
 
 
 def cli_argument(vector: ProtectedBitsVector) -> str:
+    validate_vector(vector)
     entries = (
-        f"{transition.name}:{value}"
-        for transition, value in zip(TRANSITIONS, vector)
+        f"{parameter.name}:{value}"
+        for parameter, value in zip(TYPE_PARAMETERS, vector)
     )
-    return "--transprecision-protected-bits=" + ",".join(entries)
+    return "--transprecision-type-protected-bits=" + ",".join(entries)
 
 
 def protected_bits_mapping(
     vector: ProtectedBitsVector,
 ) -> OrderedDict[str, int]:
+    validate_vector(vector)
     return OrderedDict(
-        (transition.name, value)
-        for transition, value in zip(TRANSITIONS, vector)
+        (parameter.name, value)
+        for parameter, value in zip(TYPE_PARAMETERS, vector)
     )
 
 
 def validate_vector(vector: ProtectedBitsVector) -> None:
-    if len(vector) != len(TRANSITIONS):
-        raise ValueError("a protected-bit vector must contain five values")
-    for transition, value in zip(TRANSITIONS, vector):
-        if not 0 <= value <= transition.maximum_protected_bits:
+    if len(vector) != len(TYPE_PARAMETERS):
+        raise ValueError("a protected-bit vector must contain four values")
+    for parameter, value in zip(TYPE_PARAMETERS, vector):
+        if not 0 <= value <= parameter.maximum_protected_bits:
             raise ValueError(
-                f"{transition.name} protected width {value} is outside "
-                f"0..{transition.maximum_protected_bits}"
+                f"{parameter.name} protected width {value} is outside "
+                f"0..{parameter.maximum_protected_bits}"
             )
 
 
@@ -96,49 +96,15 @@ def generate_configurations(
         ProtectedBitsVector, list[Parameterization]
     ] = OrderedDict()
 
-    for ratio_text, ratio in PROTECTION_RATIOS:
+    for n in range(MINIMUM_UNIFORM_N, MAXIMUM_UNIFORM_N + 1):
         vector = tuple(
-            ceil_fraction(ratio * transition.maximum_protected_bits)
-            for transition in TRANSITIONS
+            min(n, parameter.maximum_protected_bits)
+            for parameter in TYPE_PARAMETERS
         )
         add_configuration(
             configurations,
             vector,
-            {
-                "kind": "proportional",
-                "protection_ratio": ratio_text,
-            },
-        )
-
-    for transition_index, transition in enumerate(TRANSITIONS):
-        for protected_bits in range(transition.maximum_protected_bits + 1):
-            vector = list(EXACT_VECTOR)
-            vector[transition_index] = protected_bits
-            add_configuration(
-                configurations,
-                tuple(vector),
-                {
-                    "kind": "per-transition",
-                    "transition": transition.name,
-                    "protected_bits": protected_bits,
-                },
-            )
-
-    largest_width = max(
-        transition.maximum_protected_bits for transition in TRANSITIONS
-    )
-    for protected_bits in range(largest_width + 1):
-        vector = tuple(
-            min(protected_bits, transition.maximum_protected_bits)
-            for transition in TRANSITIONS
-        )
-        add_configuration(
-            configurations,
-            vector,
-            {
-                "kind": "global-absolute",
-                "protected_bits": protected_bits,
-            },
+            {"kind": "uniform-saturated", "n": n},
         )
 
     return configurations
@@ -149,25 +115,33 @@ def validate_configurations(
         ProtectedBitsVector, list[Parameterization]
     ],
 ) -> None:
-    parameterization_points = sum(
-        len(parameterizations)
-        for parameterizations in configurations.values()
-    )
-    if parameterization_points != EXPECTED_PARAMETERIZATION_POINTS:
-        raise ValueError(
-            "the parameterizations produced "
-            f"{parameterization_points} points; expected "
-            f"{EXPECTED_PARAMETERIZATION_POINTS}"
-        )
     if len(configurations) != EXPECTED_DYNAMIC_CONFIGURATIONS:
         raise ValueError(
-            "deduplication produced "
+            "the uniform sweep produced "
             f"{len(configurations)} dynamic configurations; expected "
             f"{EXPECTED_DYNAMIC_CONFIGURATIONS}"
         )
-    if EXACT_VECTOR not in configurations:
-        raise ValueError("the exact baseline is missing")
-    if tuple(0 for _ in TRANSITIONS) not in configurations:
+
+    for expected_n, (vector, parameterizations) in enumerate(
+        configurations.items(), start=MINIMUM_UNIFORM_N
+    ):
+        expected_vector = tuple(
+            min(expected_n, parameter.maximum_protected_bits)
+            for parameter in TYPE_PARAMETERS
+        )
+        expected_parameterization = [
+            {"kind": "uniform-saturated", "n": expected_n}
+        ]
+        if (vector != expected_vector
+                or parameterizations != expected_parameterization):
+            raise ValueError(
+                f"configuration n={expected_n} does not match the "
+                "uniform saturated definition"
+            )
+
+    if FULL_PROTECTION_VECTOR not in configurations:
+        raise ValueError("the full-protection endpoint is missing")
+    if tuple(0 for _ in TYPE_PARAMETERS) not in configurations:
         raise ValueError("the combined no-protection endpoint is missing")
 
 
@@ -179,6 +153,7 @@ def build_manifest() -> dict[str, Any]:
     for vector, parameterizations in configurations.items():
         entries.append(
             {
+                "n": parameterizations[0]["n"],
                 "id": vector_id(vector),
                 "protected_bits": protected_bits_mapping(vector),
                 "cli_argument": cli_argument(vector),
@@ -187,15 +162,27 @@ def build_manifest() -> dict[str, Any]:
         )
 
     return {
-        "schema_version": 1,
-        "transition_order": [
-            transition.name for transition in TRANSITIONS
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "policy": {
+            "name": POLICY_NAME,
+            "version": POLICY_VERSION,
+        },
+        "type_order": [
+            parameter.name for parameter in TYPE_PARAMETERS
         ],
-        "parameterization_point_count": EXPECTED_PARAMETERIZATION_POINTS,
+        "parameterization": {
+            "kind": "uniform-saturated",
+            "minimum_n": MINIMUM_UNIFORM_N,
+            "maximum_n": MAXIMUM_UNIFORM_N,
+            "rule": "effective_n(type)=min(n,maximum_n(type))",
+        },
         "dynamic_configuration_count": len(entries),
-        "fixed_controls": list(FIXED_CONTROLS),
-        "fixed_control_count": len(FIXED_CONTROLS),
-        "full_application_run_count": len(entries) + len(FIXED_CONTROLS),
+        "planned_new_execution_count": len(entries),
+        "reference_controls": list(REFERENCE_CONTROLS),
+        "reference_control_count": len(REFERENCE_CONTROLS),
+        "planned_evaluation_point_count": (
+            len(entries) + len(REFERENCE_CONTROLS)
+        ),
         "configurations": entries,
     }
 
@@ -212,7 +199,7 @@ def write_manifest(manifest: dict[str, Any], output: Path | None) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate and deduplicate the approved transprecision "
+            "Generate the approved uniform saturated transprecision "
             "protected-bit experiment matrix."
         )
     )

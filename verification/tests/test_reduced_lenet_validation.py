@@ -69,7 +69,51 @@ class ReducedLenetValidationTest(unittest.TestCase):
                 (fixture.LABEL_MAGIC, 2),
             )
             self.assertEqual(label_bytes[8:], bytes((7, 8)))
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(
+                manifest["selection"]["represented_classes"],
+                [7, 8],
+            )
+            self.assertFalse(
+                manifest["selection"]["covers_all_classes"]
+            )
             self.assertTrue((output / fixture.TRAIN_FILES[0]).is_symlink())
+
+    def test_fixture_records_minimal_prefix_covering_all_classes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source"
+            source.mkdir()
+            labels = bytes((*range(9), 0, 9))
+            (source / fixture.TEST_IMAGE_FILE).write_bytes(
+                struct.pack(">IIII", fixture.IMAGE_MAGIC, len(labels), 1, 1)
+                + bytes(range(len(labels)))
+            )
+            (source / fixture.TEST_LABEL_FILE).write_bytes(
+                struct.pack(">II", fixture.LABEL_MAGIC, len(labels))
+                + labels
+            )
+            for filename in fixture.TRAIN_FILES:
+                (source / filename).write_bytes(b"training")
+
+            manifest = fixture.prepare_fixture(
+                source,
+                root / "fixture",
+                count=len(labels),
+            )
+            selection = manifest["selection"]
+            self.assertTrue(selection["covers_all_classes"])
+            self.assertTrue(
+                selection["minimal_prefix_covering_all_classes"]
+            )
+            self.assertEqual(
+                selection["represented_classes"],
+                list(range(10)),
+            )
+            self.assertEqual(
+                selection["zero_based_last_source_index"],
+                len(labels) - 1,
+            )
 
     def write_transprecision_csv(
         self,
@@ -79,17 +123,28 @@ class ReducedLenetValidationTest(unittest.TestCase):
         external_nan: int = 123,
         effective_boxed: int = 58,
         unclassified: int = 0,
+        policy_version: int = summarizer.POLICY_VERSION,
+        invalid_promotions: int = 0,
     ) -> None:
-        rows = []
-        for name, value in zip(runner.TRANSITION_ORDER, protected_bits):
-            source, target = name.upper().split("-")
+        rows = [
+            (
+                "policy_version",
+                "",
+                "",
+                "",
+                summarizer.POLICY_NAME,
+                "",
+                policy_version,
+            )
+        ]
+        for name, value in zip(runner.TYPE_ORDER, protected_bits):
             rows.append(
                 (
                     "policy_protected_bits",
                     "",
-                    source,
-                    target,
                     "",
+                    "",
+                    name.upper(),
                     "",
                     value,
                 )
@@ -97,29 +152,45 @@ class ReducedLenetValidationTest(unittest.TestCase):
         rows.extend(
             [
                 (
-                    "transprecision_effective_type_observations",
+                    "effective_type_by_instruction",
+                    "fadd_s",
                     "",
                     "",
+                    "E5M2",
                     "",
-                    "",
-                    "",
-                    100,
+                    10,
                 ),
-                ("effective_type_total", "", "", "", "E5M2", "", 10),
-                ("effective_type_total", "", "", "", "FP16", "", 20),
-                ("effective_type_total", "", "", "", "FP32", "", 60),
-                ("effective_type_total", "", "", "", "FP64", "", 10),
-                (
-                    "effective_type_total",
-                    "",
-                    "",
-                    "",
-                    "UNCLASSIFIED",
-                    "",
-                    unclassified,
-                ),
+                ("effective_type_by_instruction", "fadd_s", "", "", "FP16", "", 20),
+                ("effective_type_by_instruction", "fadd_s", "", "", "FP32", "", 60),
+                ("effective_type_by_instruction", "fadd_d", "", "", "FP64", "", 10),
                 ("operand_unclassified_total", "", "", "", "", "", 0),
-                ("masked_to_zero_total", "", "", "", "", "", 2),
+                (
+                    "result_tag_reduction_to_zero_total",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    2,
+                ),
+                (
+                    "external_write_masked_to_zero_total",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    1,
+                ),
+                (
+                    "invalid_result_promotion_total",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    invalid_promotions,
+                ),
                 ("lazy_reclassification_total", "", "", "", "", "", 3),
                 ("unclassified_fallback_total", "", "", "", "", "", 0),
                 (
@@ -146,6 +217,15 @@ class ReducedLenetValidationTest(unittest.TestCase):
                     "",
                     "",
                     "",
+                    "FINITE",
+                    100,
+                ),
+                (
+                    "operation_result_class_total",
+                    "",
+                    "",
+                    "",
+                    "",
                     "NAN",
                     0,
                 ),
@@ -159,33 +239,6 @@ class ReducedLenetValidationTest(unittest.TestCase):
                     5,
                 ),
                 (
-                    "result_promotion_from_to",
-                    "",
-                    "E5M2",
-                    "FP32",
-                    "",
-                    "",
-                    1,
-                ),
-                (
-                    "result_demotion_exact_from_to",
-                    "",
-                    "FP32",
-                    "E5M2",
-                    "",
-                    "",
-                    4,
-                ),
-                (
-                    "result_demotion_masked_from_to",
-                    "",
-                    "FP32",
-                    "E5M2",
-                    "",
-                    "",
-                    7,
-                ),
-                (
                     "external_write_masked_from_to",
                     "",
                     "FP32",
@@ -196,6 +249,64 @@ class ReducedLenetValidationTest(unittest.TestCase):
                 ),
             ]
         )
+        if unclassified:
+            rows.append(
+                (
+                    "effective_type_by_instruction",
+                    "fadd_s",
+                    "",
+                    "",
+                    "UNCLASSIFIED",
+                    "",
+                    unclassified,
+                )
+            )
+        supported_types = ("E5M2", "FP16", "FP32", "FP64")
+        for source_index, source in enumerate(supported_types):
+            for destination in supported_types[:source_index]:
+                pair = f"{source.lower()}-{destination.lower()}"
+                total = 11 if pair == "fp32-e5m2" else 0
+                changed = 7 if pair == "fp32-e5m2" else 0
+                for category, value in (
+                    ("result_tag_reduction_total_from_to", total),
+                    ("result_tag_reduction_changed_from_to", changed),
+                ):
+                    rows.append(
+                        (
+                            category,
+                            "",
+                            source,
+                            destination,
+                            "",
+                            "",
+                            value,
+                        )
+                    )
+        for carrier, effective in summarizer.QUANTIZATION_PAIRS:
+            pair = f"{carrier.lower()}-{effective.lower()}"
+            total = 100 if pair == "fp32-fp16" else 0
+            changed = 25 if pair == "fp32-fp16" else 0
+            to_zero = 2 if pair == "fp32-fp16" else 0
+            overflow = 1 if pair == "fp32-fp16" else 0
+            underflow = 2 if pair == "fp32-fp16" else 0
+            for category, value in (
+                ("result_quantization_total_from_to", total),
+                ("result_quantization_changed_from_to", changed),
+                ("result_quantization_to_zero_from_to", to_zero),
+                ("result_quantization_overflow_from_to", overflow),
+                ("result_quantization_underflow_from_to", underflow),
+            ):
+                rows.append(
+                    (
+                        category,
+                        "",
+                        carrier,
+                        effective,
+                        "",
+                        "",
+                        value,
+                    )
+                )
         with path.open("w", newline="", encoding="utf-8") as output:
             writer = csv.writer(output)
             writer.writerow(
@@ -214,7 +325,12 @@ class ReducedLenetValidationTest(unittest.TestCase):
     def create_fixture(self, root: Path) -> Path:
         run_entries = []
         for identifier, label, bits, correct in (
-            ("exact", "Exact policy", runner.EXACT_PROTECTED_BITS, 59),
+            (
+                "full-protection",
+                "Full-protection policy",
+                runner.FULL_PROTECTION_BITS,
+                62,
+            ),
             (
                 "no-protection",
                 "No-protection endpoint",
@@ -227,17 +343,17 @@ class ReducedLenetValidationTest(unittest.TestCase):
             csv_path = run_directory / "AxPIKE_transprecision_test.csv"
             self.write_transprecision_csv(csv_path, bits)
             record = {
-                "schema_version": 1,
+                "schema_version": 3,
                 "id": identifier,
                 "label": label,
-                "image_count": 59,
+                "image_count": 62,
                 "mode": "direct-logits",
                 "protected_bits": runner.protected_bits_mapping(bits),
                 "command": [],
                 "outcome": {
-                    "processed": 59,
+                    "processed": 62,
                     "correct": correct,
-                    "errors": 59 - correct,
+                    "errors": 62 - correct,
                 },
                 "artifacts": {
                     "transprecision": {
@@ -262,12 +378,12 @@ class ReducedLenetValidationTest(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 3,
                     "purpose": "reduced deterministic LeNet validation",
                     "scope": "implementation and simulator-model validation only",
-                    "image_count": 59,
+                    "image_count": 62,
                     "mode": "direct-logits",
-                    "transition_order": list(runner.TRANSITION_ORDER),
+                    "type_order": list(runner.TYPE_ORDER),
                     "runs": run_entries,
                 },
                 sort_keys=True,
@@ -278,14 +394,13 @@ class ReducedLenetValidationTest(unittest.TestCase):
 
     def test_runner_outcome_parser_and_policy_argument(self) -> None:
         self.assertEqual(
-            runner.parse_outcome("processed: 59\ncorrect: 58\nerrors: 1\n"),
-            {"processed": 59, "correct": 58, "errors": 1},
+            runner.parse_outcome("processed: 62\ncorrect: 61\nerrors: 1\n"),
+            {"processed": 62, "correct": 61, "errors": 1},
         )
         self.assertEqual(
             runner.policy_argument(runner.NO_PROTECTION_BITS),
-            "--transprecision-protected-bits="
-            "fp32-e5m2:0,fp32-fp16:0,fp64-e5m2:0,"
-            "fp64-fp16:0,fp64-fp32:0",
+            "--transprecision-type-protected-bits="
+            "fp64:0,fp32:0,fp16:0,e5m2:0",
         )
 
     def test_summary_extracts_metrics_and_passes_invariants(self) -> None:
@@ -302,9 +417,15 @@ class ReducedLenetValidationTest(unittest.TestCase):
             )
             self.assertEqual(
                 summary["runs"][0]["transitions"][
-                    "result_demotion_masked_from_to"
+                    "result_tag_reduction_changed_from_to"
                 ],
                 7,
+            )
+            self.assertEqual(
+                summary["runs"][0]["quantization"][
+                    "result_quantization_changed_from_to"
+                ]["fp32-fp16"],
+                25,
             )
             self.assertTrue(
                 all(value == "passed" for value in summary["invariants"].values())
@@ -314,16 +435,15 @@ class ReducedLenetValidationTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             manifest_path = self.create_fixture(root)
-            exact_record_path = root / "exact" / "run.json"
+            exact_record_path = root / "full-protection" / "run.json"
             exact_record = json.loads(
                 exact_record_path.read_text(encoding="utf-8")
             )
-            csv_path = root / "exact" / exact_record["artifacts"][
-                "transprecision"
-            ]["path"]
+            csv_path = root / "full-protection" / exact_record[
+                "artifacts"]["transprecision"]["path"]
             self.write_transprecision_csv(
                 csv_path,
-                runner.EXACT_PROTECTED_BITS,
+                runner.FULL_PROTECTION_BITS,
                 external_nan=10,
                 effective_boxed=11,
             )
@@ -343,6 +463,106 @@ class ReducedLenetValidationTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exceeds external NaNs"):
                 summarizer.build_summary(manifest_path)
 
+    def test_summary_rejects_any_hashed_artifact_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manifest_path = self.create_fixture(root)
+            record_path = root / "full-protection" / "run.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            log_path = root / "full-protection" / "application.log"
+            log_path.write_text("original\n", encoding="utf-8")
+            record["artifacts"]["application_log"] = {
+                "path": log_path.name,
+                "sha256": sha256(log_path),
+            }
+            record_path.write_text(
+                json.dumps(record, sort_keys=True), encoding="utf-8"
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["runs"][0]["sha256"] = sha256(record_path)
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True), encoding="utf-8"
+            )
+            log_path.write_text("tampered\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError, "application_log artifact hash mismatch"
+            ):
+                summarizer.build_summary(manifest_path)
+
+    def test_uniform_run_requires_policy_vector_in_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manifest_path = self.create_fixture(root)
+            record_path = root / "full-protection" / "run.json"
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["n"] = 50
+            record["command"] = ["axpike", "pk", "application"]
+            record_path.write_text(
+                json.dumps(record, sort_keys=True), encoding="utf-8"
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["runs"][0]["sha256"] = sha256(record_path)
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                ValueError, "command does not contain its policy vector"
+            ):
+                summarizer.build_summary(manifest_path)
+
+    def test_summary_rejects_old_policy_and_invalid_promotions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            manifest_path = self.create_fixture(root)
+            exact_record_path = root / "full-protection" / "run.json"
+            exact_record = json.loads(
+                exact_record_path.read_text(encoding="utf-8")
+            )
+            csv_path = root / "full-protection" / exact_record[
+                "artifacts"]["transprecision"]["path"]
+            self.write_transprecision_csv(
+                csv_path,
+                runner.FULL_PROTECTION_BITS,
+                policy_version=3,
+            )
+            exact_record["artifacts"]["transprecision"]["sha256"] = sha256(
+                csv_path
+            )
+            exact_record_path.write_text(
+                json.dumps(exact_record, sort_keys=True),
+                encoding="utf-8",
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["runs"][0]["sha256"] = sha256(exact_record_path)
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "unsupported.*version"):
+                summarizer.build_summary(manifest_path)
+
+            self.write_transprecision_csv(
+                csv_path,
+                runner.FULL_PROTECTION_BITS,
+                invalid_promotions=1,
+            )
+            exact_record["artifacts"]["transprecision"]["sha256"] = sha256(
+                csv_path
+            )
+            exact_record_path.write_text(
+                json.dumps(exact_record, sort_keys=True),
+                encoding="utf-8",
+            )
+            manifest["runs"][0]["sha256"] = sha256(exact_record_path)
+            manifest_path.write_text(
+                json.dumps(manifest, sort_keys=True),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                ValueError, "invalid result promotions"
+            ):
+                summarizer.build_summary(manifest_path)
+
     def test_svg_is_deterministic_and_marks_validation_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -353,7 +573,7 @@ class ReducedLenetValidationTest(unittest.TestCase):
             self.assertIn("validation-only evidence", first)
             self.assertIn(">Effective</text>", first)
             self.assertIn(">boxed FP32</text>", first)
-            self.assertIn("11/59 (18.6%)", first)
+            self.assertIn("11/62 (17.7%)", first)
 
 
 if __name__ == "__main__":

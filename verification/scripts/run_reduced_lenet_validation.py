@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the deterministic 59-image LeNet validation endpoints.
+"""Run the deterministic 62-image LeNet validation endpoints.
 
-This runner intentionally executes only the exact and no-protection dynamic
-policies.  It is an implementation/model-validation aid, not the scientific
-experiment matrix.
+This runner intentionally executes only the full-protection and no-protection
+dynamic policies. It is an implementation/model-validation aid, not the
+scientific experiment matrix.
 """
 
 from __future__ import annotations
@@ -18,16 +18,10 @@ from pathlib import Path
 from typing import Any
 
 
-IMAGE_COUNT = 59
-TRANSITION_ORDER = (
-    "fp32-e5m2",
-    "fp32-fp16",
-    "fp64-e5m2",
-    "fp64-fp16",
-    "fp64-fp32",
-)
-EXACT_PROTECTED_BITS = (21, 13, 50, 42, 29)
-NO_PROTECTION_BITS = (0, 0, 0, 0, 0)
+IMAGE_COUNT = 62
+TYPE_ORDER = ("fp64", "fp32", "fp16", "e5m2")
+FULL_PROTECTION_BITS = (50, 21, 8, 0)
+NO_PROTECTION_BITS = (0, 0, 0, 0)
 MNIST_FILES = (
     "train-images-idx3-ubyte",
     "train-labels-idx1-ubyte",
@@ -41,10 +35,15 @@ class Configuration:
     identifier: str
     label: str
     protected_bits: tuple[int, ...]
+    n: int | None = None
 
 
 CONFIGURATIONS = (
-    Configuration("exact", "Exact policy", EXACT_PROTECTED_BITS),
+    Configuration(
+        "full-protection",
+        "Full-protection policy",
+        FULL_PROTECTION_BITS,
+    ),
     Configuration(
         "no-protection",
         "No-protection endpoint",
@@ -64,18 +63,21 @@ def sha256(path: Path) -> str:
 def protected_bits_mapping(
     values: tuple[int, ...],
 ) -> dict[str, int]:
-    return dict(zip(TRANSITION_ORDER, values))
+    return dict(zip(TYPE_ORDER, values))
 
 
 def policy_argument(values: tuple[int, ...]) -> str:
     entries = ",".join(
         f"{name}:{value}"
-        for name, value in zip(TRANSITION_ORDER, values)
+        for name, value in zip(TYPE_ORDER, values)
     )
-    return f"--transprecision-protected-bits={entries}"
+    return f"--transprecision-type-protected-bits={entries}"
 
 
-def parse_outcome(log_text: str) -> dict[str, int]:
+def parse_outcome(
+    log_text: str,
+    expected_image_count: int = IMAGE_COUNT,
+) -> dict[str, int]:
     outcome: dict[str, int] = {}
     for field in ("processed", "correct", "errors"):
         matches = re.findall(
@@ -87,9 +89,10 @@ def parse_outcome(log_text: str) -> dict[str, int]:
                 f"expected one '{field}' line, observed {len(matches)}"
             )
         outcome[field] = int(matches[0])
-    if outcome["processed"] != IMAGE_COUNT:
+    if outcome["processed"] != expected_image_count:
         raise ValueError(
-            f"processed {outcome['processed']} images; expected {IMAGE_COUNT}"
+            f"processed {outcome['processed']} images; expected "
+            f"{expected_image_count}"
         )
     if outcome["correct"] + outcome["errors"] != outcome["processed"]:
         raise ValueError("correct + errors does not equal processed")
@@ -121,6 +124,7 @@ def run_configuration(
     application: Path,
     data_directory: Path,
     output_directory: Path,
+    image_count: int,
 ) -> dict[str, Any]:
     run_directory = output_directory / configuration.identifier
     run_directory.mkdir()
@@ -135,7 +139,7 @@ def run_configuration(
         proxy_kernel,
         str(application.resolve()),
         "direct-logits",
-        str(IMAGE_COUNT),
+        str(image_count),
     ]
     completed = subprocess.run(
         command,
@@ -153,16 +157,16 @@ def run_configuration(
             f"{completed.returncode}; see {log_path}"
         )
 
-    outcome = parse_outcome(completed.stdout)
+    outcome = parse_outcome(completed.stdout, image_count)
     csv_paths = {
         stem: find_single_csv(run_directory, stem)
         for stem in ("counters", "energy", "transprecision")
     }
     run_record = {
-        "schema_version": 1,
+        "schema_version": 3,
         "id": configuration.identifier,
         "label": configuration.label,
-        "image_count": IMAGE_COUNT,
+        "image_count": image_count,
         "mode": "direct-logits",
         "protected_bits": protected_bits_mapping(
             configuration.protected_bits
@@ -183,6 +187,8 @@ def run_configuration(
             }
         },
     }
+    if configuration.n is not None:
+        run_record["n"] = configuration.n
     run_record_path = run_directory / "run.json"
     write_json(run_record_path, run_record)
     return {
@@ -229,8 +235,8 @@ def git_provenance(path: Path) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run exact and no-protection policies on the deterministic "
-            "59-image LeNet fixture."
+            "Run full-protection and no-protection policies on the "
+            "deterministic 62-image LeNet fixture."
         )
     )
     parser.add_argument("--axpike", type=Path, required=True)
@@ -255,6 +261,26 @@ def main() -> int:
             args.data_directory / filename,
             f"MNIST input {filename}",
         )
+    fixture_manifest_path = args.data_directory / "fixture-manifest.json"
+    require_file(fixture_manifest_path, "reduced-fixture manifest")
+    fixture_manifest = json.loads(
+        fixture_manifest_path.read_text(encoding="utf-8")
+    )
+    if fixture_manifest.get("schema_version") != 2:
+        raise ValueError("unsupported reduced-fixture manifest schema")
+    if fixture_manifest.get("image_count") != IMAGE_COUNT:
+        raise ValueError(
+            f"fixture contains {fixture_manifest.get('image_count')} images; "
+            f"expected {IMAGE_COUNT}"
+        )
+    selection = fixture_manifest.get("selection", {})
+    if (
+        not selection.get("covers_all_classes")
+        or not selection.get("minimal_prefix_covering_all_classes")
+    ):
+        raise ValueError(
+            "fixture is not the minimal contiguous prefix covering all classes"
+        )
     if args.output_directory.exists():
         raise ValueError(
             "output directory already exists; choose a new directory to "
@@ -270,16 +296,17 @@ def main() -> int:
             application=args.application,
             data_directory=args.data_directory,
             output_directory=args.output_directory,
+            image_count=IMAGE_COUNT,
         )
         for configuration in CONFIGURATIONS
     ]
     manifest = {
-        "schema_version": 1,
+        "schema_version": 3,
         "purpose": "reduced deterministic LeNet validation",
         "scope": "implementation and simulator-model validation only",
         "image_count": IMAGE_COUNT,
         "mode": "direct-logits",
-        "transition_order": list(TRANSITION_ORDER),
+        "type_order": list(TYPE_ORDER),
         "source_revisions": {
             "axpike": git_provenance(
                 Path(__file__).resolve().parents[2]
@@ -300,6 +327,11 @@ def main() -> int:
             },
             "data_directory": {
                 "path": str(args.data_directory.resolve()),
+                "fixture_manifest": {
+                    "path": str(fixture_manifest_path.resolve()),
+                    "sha256": sha256(fixture_manifest_path),
+                    "selection": selection,
+                },
                 "files": {
                     filename: {
                         "size": (args.data_directory / filename).stat().st_size,

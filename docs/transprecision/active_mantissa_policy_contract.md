@@ -8,21 +8,23 @@ defines the complete policy and experiment contract approved during the
 policy-design sprints. No policy behavior should be inferred beyond this
 contract.
 
-The complete policy is not yet integrated into the experiment workflow. The
-validated implementation provides a fixed per-run configuration object with
-exact-baseline defaults and implements the complete protected-bit range for all
-five FP32/FP64 carrier-to-candidate transitions. Every candidate mask is derived
-independently from the original architectural result. When a candidate accepts,
-the architectural register stores the selected masked value, so subsequent
-instructions consume it.
+The scoped execution and analysis protocol is maintained separately in
+[`../experiments/sscad2026_uniform_n_experiment_protocol.md`](../experiments/sscad2026_uniform_n_experiment_protocol.md).
 
-The deterministic experiment-matrix generator, lazy metadata recovery, and
-contextual special-value behavior are implemented and validated with focused
-tests. Reduced application validation, counter-invariant checks, and
-deterministic replay still precede scientific evaluation. Therefore, the
-existence of the complete classification core, command-line configuration,
-metadata recovery, and experiment matrix must not be interpreted as readiness
-to run the complete experiment.
+The operation-result path now implements effective-type quantization followed
+by optional type-based reduction. Spike first computes in architectural carrier
+\(W\). The result is then quantized to the operation effective type \(T\), and
+all lower candidates are derived independently from that \(T\)-quantized value.
+The accepted value and its tag are stored together, so subsequent instructions
+consume the selected representation.
+
+The configuration, metadata, counter, and CSV contracts are implemented and
+validated with focused tests. The full-protection and no-protection endpoints
+have also passed reduced application validation, counter-invariant checks, and
+deterministic replay. The SSCAD experiment matrix now contains 51 dynamic
+configurations under one uniform saturated parameterization. The remaining 49
+interior configurations must pass the same reduced-validation gate before the
+complete scientific evaluation.
 
 ## Formats and Ordering
 
@@ -61,24 +63,27 @@ The policy contract uses \(t_{\mathrm{op}}\); the current instrumentation and
 paper also use the name effective type, \(t_{\mathrm{eff}}\), for the same
 quantity.
 
-Spike nevertheless produces the result in architectural carrier \(W\), which
-is FP32 for a single-precision instruction and FP64 for a double-precision
-instruction. The masking policy inspects the explicit mantissa bits of \(W\).
-The logical type \(t_{\mathrm{op}}\) is used to interpret operand promotions
-and result promotions or demotions; it does not redefine the bit layout of the
-architectural result.
+Spike nevertheless produces the initial result in architectural carrier \(W\),
+which is FP32 for a single-precision instruction and FP64 for a double-precision
+instruction. The effective type is limited to the destination carrier:
+\(T=\min(t_{\mathrm{op}},W)\). The architectural result \(y_W\) is quantized to
+\(T\), producing \(y_T\) represented in the original carrier.
 
-Consider an architectural value \(x_W\) and a smaller candidate \(B\). Let
+For a smaller candidate \(J<T\), let
 
 \[
-    p_W = \operatorname{mantissaBits}(W), \qquad
-    p_B = \operatorname{mantissaBits}(B)
+    a = \operatorname{mantissaBits}(T), \qquad
+    b = \operatorname{mantissaBits}(J)
 \]
 
 and define
 
 \[
-    d_{W\rightarrow B}=p_W-p_B.
+    d_{T\rightarrow J}=a-b,\qquad
+    \operatorname{effectiveN}_{T\rightarrow J}=\min(n_T,d_{T\rightarrow J}),
+    \qquad
+    k_{T\rightarrow J}=d_{T\rightarrow J}
+      -\operatorname{effectiveN}_{T\rightarrow J}.
 \]
 
 An active mantissa bit is a bit equal to one in the explicit architectural
@@ -87,14 +92,18 @@ on whether the encoded finite value is normal or subnormal.
 
 ## Protected and Ignorable Regions
 
-For a transition \(W\rightarrow B\), the \(d_{W\rightarrow B}\) excess bits are
+For a transition \(T\rightarrow J\), the \(d_{T\rightarrow J}\) excess bits are
 partitioned into:
 
-- \(n\) most-significant protected bits; and
-- \(k=d_{W\rightarrow B}-n\) least-significant ignorable bits.
+- \(\operatorname{effectiveN}_{T\rightarrow J}\) most-significant protected
+  bits; and
+- \(k_{T\rightarrow J}\) least-significant ignorable bits.
 
-The policy explores a consecutive ignorable window that always starts at the
-least-significant end of the source mantissa. Bit position defines the policy:
+The configured protection is attached to source type \(T\), not independently
+to every transition. The canonical vector is
+`FP64:0..50, FP32:0..21, FP16:0..8, E5M2:0`. In a wider carrier, the ignorable
+window begins at the carrier offset corresponding to the least-significant bit
+of the simulated \(T\) mantissa. Bit position defines the policy:
 an active bit in the protected region prevents the masked value from being
 exactly representable in the candidate, whereas bits in the ignorable window
 are cleared before candidate representability is evaluated. No population
@@ -105,24 +114,23 @@ count or numerical-error weighting is used.
 Let
 
 \[
-    x'_{B,k}=M_{W,k}(x_W)
+    y'_{J,k}=M_{T,k}(y_T)
 \]
 
-be the value obtained by clearing the \(k\) least-significant bits of the
-explicit mantissa of \(x_W\), while preserving the remaining architectural
-carrier fields.
+be the value obtained by clearing the candidate-relative \(k\) bits in the
+active \(T\) mantissa region while preserving the remaining carrier fields.
 
-Let \(C_{W\rightarrow B}\) denote conversion from \(W\) to \(B\), and let
-\(C_{B\rightarrow W}\) denote conversion back to \(W\). Candidate \(B\) accepts
-\(x_W\) under configuration \(k\) exactly when
+Let \(C_{W\rightarrow J}\) denote conversion from the carrier representation
+to \(J\), and let \(C_{J\rightarrow W}\) denote conversion back to \(W\).
+Candidate \(J\) accepts exactly when
 
 \[
     \operatorname{bits}_W
     \left(
-        C_{B\rightarrow W}\left(C_{W\rightarrow B}(x'_{B,k})\right)
+        C_{J\rightarrow W}\left(C_{W\rightarrow J}(y'_{J,k})\right)
     \right)
     =
-    \operatorname{bits}_W(x'_{B,k}).
+    \operatorname{bits}_W(y'_{J,k}).
 \]
 
 The conversion round trip is the authoritative acceptance check. It verifies
@@ -131,33 +139,33 @@ the conversion model used by the experiment. Consequently, candidate range,
 normal/subnormal encoding effects, and the candidate conversion semantics are
 not approximated by a separate mantissa-only range test.
 
-Each candidate is derived independently from the original \(x_W\). A masked
+Each candidate is derived independently from the original \(y_T\). A masked
 value produced for a rejected candidate is discarded before the next candidate
-is tested. If candidate \(B\) is accepted, the propagated value is
-\(x'_{B,k}\). The original ignored bits do not participate in a subsequent
+is tested. If candidate \(J\) is accepted, the propagated value is
+\(y'_{J,k}\). The original ignored bits do not participate in a subsequent
 rounding decision. The architectural FP32 or FP64 register representation
-stores \(x'_{B,k}\), and simulator-side precision metadata records \(B\). Later
+stores \(y'_{J,k}\), and simulator-side precision metadata records \(J\). Later
 instructions therefore consume the masked value.
 
-If no smaller candidate accepts, the architectural carrier \(W\) is selected
-without masking.
+If no smaller candidate accepts, \(T\) and \(y_T\) are retained.
 
 ## Exact Baseline
 
-For \(k=0\), no source mantissa bit is cleared:
+For every lower candidate with \(k=0\), no additional \(T\)-mantissa bit is
+cleared:
 
 \[
-    x'_{B,0}=x_W.
+    y'_{J,0}=y_T.
 \]
 
-The candidate-acceptance equation therefore becomes the existing exact
-representability round trip. Equivalently, \(k=0\) corresponds to
-\(n=d_{W\rightarrow B}\). This configuration is the exact transprecision
-baseline and introduces no policy-induced value change.
+The candidate-acceptance equation therefore becomes an exact-representability
+test relative to the already quantized \(y_T\). Full type protection prevents
+additional lossy reduction below \(T\); it does not make the complete path
+identical to architectural FP32/FP64 execution because \(W\rightarrow T\)
+quantization can still change the result.
 
-For \(k>0\), or equivalently \(n<d_{W\rightarrow B}\), progressively larger
-least-significant regions may be cleared before exact candidate
-representability is tested.
+For \(k_{T\rightarrow J}>0\), progressively larger least-significant regions
+may be cleared before exact candidate representability is tested.
 
 ## Rounding and Exception State
 
@@ -182,15 +190,16 @@ unit.
 
 Existing positive and negative zero values are evaluated in candidate order and
 select E5M2 while preserving their sign. If masking changes a nonzero value
-into signed zero, the zero is propagated and a distinct `masked_to_zero` event
-is recorded.
+into signed zero, the zero is propagated and attributed either to W-to-T
+quantization or to the later result-tag-reduction stage.
 
 Infinity and NaN are handled outside the finite-value masking rule:
 
 - an externally introduced infinity or NaN preserves its architectural bit
   pattern and receives E5M2 metadata;
 - an operation-generated infinity or NaN preserves Spike's architectural bit
-  pattern and receives \(t_{\mathrm{op}}\) metadata;
+  pattern and receives carrier-limited effective-type metadata
+  \(T=\min(t_{\mathrm{op}},W)\);
 - NaN sign and payload do not participate in format selection, and the
   experiment does not claim candidate-format NaN-payload equivalence.
 
@@ -222,14 +231,20 @@ metadata.
 
 ## Result Selection and Persistence
 
-Spike computes an architectural result \(y_W\) from the persistent masked
-operands. Candidate classification uses \(W\), always derives candidate masks
-from the original \(y_W\), and stores the first accepted \(y'_{B,k}\) together
-with tag \(B\). Relative to \(t_{\mathrm{op}}\):
+Spike computes an architectural result \(y_W\) from the persistent selected
+operands. Operation writeback quantizes it to \(y_T\), derives all lower
+candidates from \(y_T\), and stores the first accepted \(y'_{J,k}\) with tag
+\(J\). A valid result satisfies \(J\leq T\). \(J<T\) is a result reduction;
+\(J=T\) retains the effective type. \(J>T\) is an invalid state, not a normal
+promotion policy.
 
-- \(B<t_{\mathrm{op}}\) is a result demotion;
-- \(B=t_{\mathrm{op}}\) retains the operation type;
-- \(B>t_{\mathrm{op}}\) is a result promotion.
+The post-implementation review concluded that the current experiment will not
+introduce an explicit result-promotion policy. A finite result outside the
+dynamic range of \(T\) follows the defined overflow or underflow behavior; it
+does not select a tag above \(T\). `invalid_result_promotion_total` therefore
+remains a zero-expected invariant. Promotion may be reconsidered only if later
+application evidence motivates a separate researcher-approved semantic
+contract.
 
 The stored masked value is consumed by later instructions. FP32 writes preserve
 Spike's architectural NaN-boxing mechanism. The metadata is simulator-only and
@@ -253,112 +268,59 @@ recover metadata from a preceding store.
 
 ## Experimental Parameterizations
 
-The experiment compares three mappings from an experiment-level control to the
-per-transition protected width.
+The canonical vector order is `FP64, FP32, FP16, E5M2`, with maximum protected
+widths `50, 21, 8, 0`.
 
-### Proportional Protection
+The SSCAD experiment uses one integer parameter, `n`, uniformly for every
+supported source type. It evaluates every integer from 0 through 50. Because
+the types have different maximum protected widths, the effective value for a
+type is `min(n, maximum_for_type)`. This gives the vector
+`min(n,50), min(n,21), min(n,8), 0` in canonical order.
 
-This is the principal combined-policy parameterization. For protection ratio
-\(\rho\), with \(0\leq\rho\leq1\),
+The 51 values of `n` produce 51 distinct dynamic configurations. There is no
+proportional sweep, per-type sweep, factorial combination, or alias
+deduplication in the scoped SSCAD experiment. The saturation points divide the
+curve into three regimes: all variable-width types change for `n` from 0
+through 8; FP64 and FP32 change for `n` from 9 through 21; and only FP64 changes
+for `n` from 22 through 50. E5M2 has zero configurable protected bits and is
+therefore unchanged throughout the sweep.
 
-\[
-    n_{W\rightarrow B}
-    =
-    \left\lceil
-        \rho d_{W\rightarrow B}
-    \right\rceil,
-    \qquad
-    k_{W\rightarrow B}
-    =
-    d_{W\rightarrow B}-n_{W\rightarrow B}.
-\]
+The endpoint at `n=0` is the combined no-protection dynamic policy. The
+endpoint at `n=50` is the full-protection vector `50,21,8,0`. Full protection
+can still perform \(W\rightarrow T\) quantization, so it is not the original
+architectural FP32/FP64 control.
 
-This mapping applies the same relative protection to excess regions of
-different widths. The full-application experiment uses
-\(\rho\in\{1,0.75,0.50,0.25,0\}\).
+One original FP32/FP64 result is retained as an external reference control. It
+will be recovered from repository history rather than generated by the dynamic
+matrix. Its commit, executable, application and input hashes, command, and
+output provenance must be established before it is compared with the 51
+dynamic points. Fixed-format FP16 and E5M2 ADF runs are outside the scoped
+SSCAD matrix.
 
-### Per-Transition Sensitivity
-
-One \(n_{W\rightarrow B}\) is varied at a time. All other transitions remain at
-their exact configurations, \(n=d\). Every integer protected width from zero
-through \(d_{W\rightarrow B}\) is evaluated for each of:
-
-- FP32 to FP16: \(n=0,\ldots,13\);
-- FP32 to E5M2: \(n=0,\ldots,21\);
-- FP64 to FP32: \(n=0,\ldots,29\);
-- FP64 to FP16: \(n=0,\ldots,42\);
-- FP64 to E5M2: \(n=0,\ldots,50\).
-
-The resulting curves isolate application and format-assignment sensitivity to
-each transition without a full factorial exploration.
-
-### Global Absolute Protection
-
-A single absolute \(n\) is applied to all transitions:
-
-\[
-    n_{W\rightarrow B}
-    =
-    \min(n,d_{W\rightarrow B}).
-\]
-
-This mapping intentionally exposes the effect of applying the same protected
-bit count to excess regions of different widths. Every global integer
-\(n=0,\ldots,50\) is evaluated.
-
-Configurations are identified by their complete vector of effective protected
-widths. Equivalent vectors across proportional, per-transition, and global
-parameterizations are executed once. In particular, proportional protection
-of 100%, global \(n=50\), and every fully protected per-transition endpoint
-share the exact baseline. Proportional protection of 0% and global \(n=0\)
-share the combined no-protection endpoint.
+The generated manifest uses schema version 3, identifies policy
+`effective-type-quantization-v4` with numeric version 4, and includes all four
+effective protected widths and the originating uniform `n` in every dynamic
+configuration. It records 51 planned new executions and the historical control
+as a provenance-pending external reference, for 52 planned evaluation points.
 
 ## Execution Configuration
 
 Each AxPIKE execution receives the complete protected-width vector through:
 
 ```text
---transprecision-protected-bits=fp32-e5m2:n,fp32-fp16:n,fp64-e5m2:n,fp64-fp16:n,fp64-fp32:n
+--transprecision-type-protected-bits=fp64:n,fp32:n,fp16:n,e5m2:0
 ```
 
-The five named transitions are mandatory when the option is present; their
-textual order is irrelevant. Duplicate or unknown names, missing transitions,
-non-decimal values, and widths outside the transition bounds are rejected.
-When the option is absent, the exact-baseline vector `21,13,50,42,29` is used.
+The four named types are mandatory when the option is present; their textual
+order is irrelevant. Duplicate or unknown names, missing types, non-decimal
+values, and widths outside the type bounds are rejected.
+When the option is absent, the full-protection vector `50,21,8,0` is used.
 The configuration remains fixed throughout the execution.
 
-The simulator accepts only the complete canonical vector. Proportional,
-per-transition, and global parameterizations are expanded and deduplicated by
-the external experiment generator. Every transprecision CSV records the five
-effective protected widths using `policy_protected_bits` rows so that the
-result identifies its own policy configuration.
-
-The deterministic generator is:
-
-```text
-verification/scripts/generate_transprecision_experiment_matrix.py
-```
-
-It produces a JSON manifest with:
-
-- one entry for each unique dynamic configuration;
-- a stable identifier derived from the complete protected-width vector;
-- the complete `--transprecision-protected-bits` argument;
-- every proportional, per-transition, or global parameterization that maps to
-  the configuration; and
-- separate metadata for the three fixed controls.
-
-Generate a manifest with:
-
-```text
-python3 verification/scripts/generate_transprecision_experiment_matrix.py \
-  --output verification/out/transprecision-experiment-matrix.json
-```
-
-The output directory is for generated artifacts and is not the durable
-experiment record. Final experiments must preserve the generator version,
-manifest, commands, inputs, and summarized results in the traceability
-structure selected for the submission.
+Every transprecision CSV records policy
+`effective-type-quantization-v4`, numeric version `4`, and the four type
+parameters using `policy_protected_bits` rows. Consumers must reject older
+policy versions rather than reinterpret them.
 
 ## Experimental Objective
 
@@ -366,7 +328,9 @@ The experiment characterizes curves relating policy aggressiveness to:
 
 - application accuracy;
 - the distribution of assigned formats;
-- exact and masked-value demotions; and
+- \(W\rightarrow T\) quantizations for lower effective types, including
+  changed results, overflow, and underflow;
+- total and value-changing \(T\rightarrow J\) result-tag reductions; and
 - format transitions required by the dynamic execution.
 
 The experiment does not define an application-independent acceptable-accuracy
@@ -375,19 +339,26 @@ workload and configurations.
 
 ## Instrumentation Contract
 
-The scientific transition metrics are:
+The instrumentation metrics are:
 
 - operand promotions, indexed by operand tag and operation type;
-- result promotions, indexed by operation type and selected result tag;
-- exact result demotions, for which the selected value equals the original
-  architectural result bit-for-bit; and
-- masked result demotions, for which the propagated selected value differs from
-  the original architectural result.
+- `result_quantization_total_from_to`, partitioned by \(W\) and lower \(T\);
+- `result_quantization_changed_from_to`, the subset whose carrier bits change;
+- explicit overflow events propagated as signed infinity without changing
+  architectural exception flags;
+- explicit underflow events propagated as an effective-type subnormal or
+  signed zero, also without changing architectural exception flags;
+- `result_tag_reduction_total_from_to`, for every \(J<T\) selection; and
+- `result_tag_reduction_changed_from_to`, the subset whose candidate mask
+  changes the propagated value.
 
-Only transitions between different supported formats are emitted. Equal-format
-pairs and pairs involving `UNCLASSIFIED` are not promotion or demotion events.
-The previous aggregate result-narrowing metric is not retained because it would
-duplicate the sum of exact and masked result demotions.
+Identity \(W=T\) result paths are not quantization events and are not exported.
+Effective-type totals are derived exclusively from
+`effective_type_by_instruction`.
+
+`invalid_result_promotion_total` replaces the former result-promotion matrix.
+It counts any impossible \(J>T\) state and must remain zero. It is a validation
+invariant, not a supported policy outcome.
 
 Candidate rejection counts are not scientific outputs. The search may reject
 one or more candidate formats before selecting a result, but only the selected
@@ -400,20 +371,17 @@ result promotions or demotions. Their selected tags contribute to the write-tag
 distribution. When an external write propagates a changed masked value, the
 event is recorded by architectural carrier and selected format.
 
-Value-class totals, `masked_to_zero`, and uncovered-metadata events are
+Value-class totals, `result_tag_reduction_to_zero_total`,
+`external_write_masked_to_zero_total`, and uncovered-metadata events are
 validation diagnostics rather than principal scientific transition metrics.
 The `fp64_load_nan_boxed_fp32_effective_total` diagnostic counts FP64 loads
 whose all-ones upper word was subsequently confirmed by a typed FP32 FPR read.
 It counts at most once per loaded value and remains independent of the FP64
 carrier class recorded at the load.
 
-All unique configurations are first executed on a deterministic reduced MNIST
-case for structural validation and then on the complete 10,000-image MNIST
-test set for the reported accuracy curves. Deduplicating the approved vectors
-produces 201 dynamic configurations. Including the original FP32/FP64 run and
-the fixed FP16 and E5M2 controls produces 204 unique full-application runs. The
-experiment generator must reproduce this count rather than rely on a manually
-maintained run list.
+All approved unique configurations must first execute on a deterministic
+reduced MNIST case for structural validation. Full scientific evaluation
+remains blocked until those reduced validations pass under policy version 4.
 
 ## Instruction and Claim Scope
 
@@ -441,7 +409,7 @@ Before dynamic-policy results are used, focused validation must demonstrate:
 - correct operation, result-transition, special-value, and metadata-recovery
   counters;
 - preservation of architectural RNE and `fflags` behavior;
-- deterministic generation and deduplication of the experiment matrix;
+- deterministic generation of all 51 uniform saturated configurations;
 - zero or individually explained `UNCLASSIFIED`, NaN, and infinity events;
 - counter invariants and deterministic replay of a reduced LeNet run;
 - traceability from commits, commands, inputs, and configurations to CSVs,

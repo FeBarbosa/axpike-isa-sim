@@ -31,94 +31,92 @@ class TransprecisionExperimentMatrixTest(unittest.TestCase):
             for entry in self.manifest["configurations"]
         }
 
-    def test_expected_counts(self) -> None:
+    def test_schema_policy_scope_and_expected_counts(self) -> None:
+        self.assertEqual(self.manifest["schema_version"], 3)
         self.assertEqual(
-            self.manifest["parameterization_point_count"], 216
+            self.manifest["policy"],
+            {
+                "name": "effective-type-quantization-v4",
+                "version": 4,
+            },
         )
         self.assertEqual(
-            self.manifest["dynamic_configuration_count"], 201
+            self.manifest["type_order"],
+            ["fp64", "fp32", "fp16", "e5m2"],
         )
-        self.assertEqual(self.manifest["fixed_control_count"], 3)
-        self.assertEqual(self.manifest["full_application_run_count"], 204)
-        self.assertEqual(len(self.configurations), 201)
         self.assertEqual(
-            sum(
-                len(entry["parameterizations"])
-                for entry in self.manifest["configurations"]
-            ),
-            216,
+            self.manifest["parameterization"],
+            {
+                "kind": "uniform-saturated",
+                "minimum_n": 0,
+                "maximum_n": 50,
+                "rule": "effective_n(type)=min(n,maximum_n(type))",
+            },
+        )
+        self.assertEqual(self.manifest["dynamic_configuration_count"], 51)
+        self.assertEqual(self.manifest["planned_new_execution_count"], 51)
+        self.assertEqual(self.manifest["reference_control_count"], 1)
+        self.assertEqual(self.manifest["planned_evaluation_point_count"], 52)
+        self.assertEqual(len(self.configurations), 51)
+        self.assertEqual(
+            self.manifest["reference_controls"],
+            [{
+                "id": "original-fp32-fp64",
+                "source": "historical-artifact",
+                "status": "provenance-pending",
+            }],
         )
 
-    def test_proportional_vectors_use_exact_ceiling(self) -> None:
+    def test_vectors_match_independent_uniform_reference(self) -> None:
+        limits = (50, 21, 8, 0)
+        for n, entry in enumerate(self.manifest["configurations"]):
+            vector = tuple(entry["protected_bits"].values())
+            self.assertEqual(entry["n"], n)
+            self.assertEqual(
+                vector, tuple(min(n, limit) for limit in limits)
+            )
+            self.assertEqual(
+                entry["parameterizations"],
+                [{"kind": "uniform-saturated", "n": n}],
+            )
+
+    def test_regime_breakpoints_and_endpoints(self) -> None:
         expected = {
-            "1.00": (21, 13, 50, 42, 29),
-            "0.75": (16, 10, 38, 32, 22),
-            "0.50": (11, 7, 25, 21, 15),
-            "0.25": (6, 4, 13, 11, 8),
-            "0.00": (0, 0, 0, 0, 0),
+            0: (0, 0, 0, 0),
+            8: (8, 8, 8, 0),
+            9: (9, 9, 8, 0),
+            21: (21, 21, 8, 0),
+            22: (22, 21, 8, 0),
+            50: (50, 21, 8, 0),
         }
-        observed = {}
-        for vector, entry in self.configurations.items():
-            for parameterization in entry["parameterizations"]:
-                if parameterization["kind"] == "proportional":
-                    observed[
-                        parameterization["protection_ratio"]
-                    ] = vector
-        self.assertEqual(observed, expected)
+        for n, vector in expected.items():
+            entry = self.manifest["configurations"][n]
+            self.assertEqual(tuple(entry["protected_bits"].values()), vector)
 
-    def test_per_transition_sweeps_cover_every_width(self) -> None:
-        observed = {
-            transition.name: set() for transition in matrix.TRANSITIONS
-        }
-        for entry in self.manifest["configurations"]:
-            for parameterization in entry["parameterizations"]:
-                if parameterization["kind"] == "per-transition":
-                    observed[parameterization["transition"]].add(
-                        parameterization["protected_bits"]
-                    )
-        for transition in matrix.TRANSITIONS:
-            self.assertEqual(
-                observed[transition.name],
-                set(range(transition.maximum_protected_bits + 1)),
-            )
-
-    def test_global_sweep_uses_saturated_absolute_width(self) -> None:
-        observed = {}
-        for vector, entry in self.configurations.items():
-            for parameterization in entry["parameterizations"]:
-                if parameterization["kind"] == "global-absolute":
-                    observed[parameterization["protected_bits"]] = vector
-
-        self.assertEqual(set(observed), set(range(51)))
-        for protected_bits, vector in observed.items():
-            self.assertEqual(
-                vector,
-                tuple(
-                    min(
-                        protected_bits,
-                        transition.maximum_protected_bits,
-                    )
-                    for transition in matrix.TRANSITIONS
-                ),
-            )
-
-    def test_equivalent_endpoints_are_deduplicated_with_aliases(self) -> None:
-        exact = self.configurations[(21, 13, 50, 42, 29)]
-        self.assertEqual(len(exact["parameterizations"]), 7)
-        no_protection = self.configurations[(0, 0, 0, 0, 0)]
-        self.assertEqual(len(no_protection["parameterizations"]), 2)
-
-    def test_cli_arguments_are_complete_and_canonical(self) -> None:
+    def test_cli_arguments_and_ids_are_complete_and_canonical(self) -> None:
+        expected_names = ("fp64", "fp32", "fp16", "e5m2")
+        identifiers = set()
         for vector, entry in self.configurations.items():
             expected_entries = ",".join(
-                f"{transition.name}:{value}"
-                for transition, value in zip(matrix.TRANSITIONS, vector)
+                f"{name}:{value}"
+                for name, value in zip(expected_names, vector)
             )
             self.assertEqual(
                 entry["cli_argument"],
-                "--transprecision-protected-bits=" + expected_entries,
+                "--transprecision-type-protected-bits="
+                + expected_entries,
             )
             self.assertEqual(entry["id"], matrix.vector_id(vector))
+            identifiers.add(entry["id"])
+        self.assertEqual(len(identifiers), len(self.configurations))
+
+    def test_invalid_vectors_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "four values"):
+            matrix.validate_vector((50, 21, 8))
+        with self.assertRaisesRegex(ValueError, "fp64"):
+            matrix.validate_vector((51, 21, 8, 0))
+        with self.assertRaisesRegex(ValueError, "e5m2"):
+            matrix.validate_vector((50, 21, 8, 1))
 
     def test_written_manifest_is_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
