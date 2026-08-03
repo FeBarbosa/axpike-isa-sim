@@ -362,7 +362,8 @@ $(foreach sproj,$(sprojs_enabled), \
 # ADeLe control headers are included transitively by decode.h, so these
 # objects need the generated instruction count header before compile.
 $(fesvr_objs) $(riscv_objs) $(disasm_objs) $(customext_objs) \
-$(spike_main_objs) $(spike_main_install_prog_objs): insn_count.h
+$(spike_main_objs) $(spike_main_install_prog_objs) \
+$(riscv_test_objs): insn_count.h
 
 #-------------------------------------------------------------------------
 # Autodependency files
