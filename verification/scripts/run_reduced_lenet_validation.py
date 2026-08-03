@@ -29,6 +29,13 @@ MNIST_FILES = (
     "t10k-images-idx3-ubyte",
     "t10k-labels-idx1-ubyte",
 )
+AXPIKE_PROVENANCE_EXCLUSIONS = (
+    (
+        "paper-sscad2026",
+        "independently versioned article sources do not affect the "
+        "simulator or application executables",
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -213,7 +220,39 @@ def require_file(path: Path, description: str) -> None:
         raise ValueError(f"{description} is not a file: {path}")
 
 
-def git_provenance(path: Path) -> dict[str, Any]:
+def run_git(
+    root: Path | str,
+    arguments: list[str],
+    *,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        check=check,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def git_provenance(
+    path: Path,
+    *,
+    excluded_paths: tuple[tuple[str, str], ...] = (),
+) -> dict[str, Any]:
+    for relative_path, _reason in excluded_paths:
+        candidate = Path(relative_path)
+        if (
+            candidate.is_absolute()
+            or not candidate.parts
+            or ".." in candidate.parts
+            or relative_path == "."
+        ):
+            raise ValueError(
+                f"provenance exclusion must be a repository-relative path: "
+                f"{relative_path!r}"
+            )
+
     root = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
         check=True,
@@ -228,18 +267,75 @@ def git_provenance(path: Path) -> dict[str, Any]:
         stderr=subprocess.PIPE,
         text=True,
     ).stdout.strip()
-    status = subprocess.run(
-        ["git", "-C", root, "status", "--porcelain"],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    ).stdout
-    return {
+    status_arguments = ["status", "--porcelain", "--", "."]
+    status_arguments.extend(
+        f":(exclude,top){relative_path}"
+        for relative_path, _reason in excluded_paths
+    )
+    status = run_git(root, status_arguments).stdout
+    provenance: dict[str, Any] = {
         "root": root,
         "commit": commit,
         "dirty": bool(status),
     }
+    if not excluded_paths:
+        return provenance
+
+    excluded_states = []
+    for relative_path, reason in excluded_paths:
+        target = Path(root) / relative_path
+        parent_status = run_git(
+            root,
+            ["status", "--porcelain", "--", relative_path],
+        ).stdout.splitlines()
+        tracked_object_result = run_git(
+            root,
+            ["rev-parse", f"HEAD:{relative_path}"],
+            check=False,
+        )
+        state: dict[str, Any] = {
+            "path": relative_path,
+            "reason": reason,
+            "parent_status_entries": parent_status,
+            "tracked_object": (
+                tracked_object_result.stdout.strip()
+                if tracked_object_result.returncode == 0
+                else None
+            ),
+        }
+
+        if target.is_dir():
+            nested_root_result = run_git(
+                target,
+                ["rev-parse", "--show-toplevel"],
+                check=False,
+            )
+            if (
+                nested_root_result.returncode == 0
+                and Path(nested_root_result.stdout.strip()).resolve()
+                == target.resolve()
+            ):
+                nested_status = run_git(
+                    target, ["status", "--porcelain"]
+                ).stdout
+                state["independent_worktree"] = {
+                    "root": str(target.resolve()),
+                    "commit": run_git(
+                        target, ["rev-parse", "HEAD"]
+                    ).stdout.strip(),
+                    "dirty": bool(nested_status),
+                    "status_entries": nested_status.splitlines(),
+                }
+        excluded_states.append(state)
+
+    provenance["status_scope"] = {
+        "included": ".",
+        "excluded_paths": [
+            relative_path for relative_path, _reason in excluded_paths
+        ],
+    }
+    provenance["excluded_path_states"] = excluded_states
+    return provenance
 
 
 def main() -> int:
@@ -319,7 +415,8 @@ def main() -> int:
         "type_order": list(TYPE_ORDER),
         "source_revisions": {
             "axpike": git_provenance(
-                Path(__file__).resolve().parents[2]
+                Path(__file__).resolve().parents[2],
+                excluded_paths=AXPIKE_PROVENANCE_EXCLUSIONS,
             ),
             "adf": git_provenance(
                 Path(__file__).resolve().parents[2] / "adele" / "adf"

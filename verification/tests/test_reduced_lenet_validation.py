@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -36,6 +37,77 @@ def sha256(path: Path) -> str:
 
 
 class ReducedLenetValidationTest(unittest.TestCase):
+    def test_git_provenance_separates_executable_and_excluded_scopes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+
+            def git(directory: Path, *arguments: str) -> None:
+                subprocess.run(
+                    ["git", "-C", str(directory), *arguments],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+
+            git(root, "init")
+            (root / "simulator.cc").write_text("stable\n", encoding="utf-8")
+            git(root, "add", "simulator.cc")
+            git(
+                root,
+                "-c",
+                "user.name=Validation Test",
+                "-c",
+                "user.email=validation@example.invalid",
+                "commit",
+                "-m",
+                "fixture",
+            )
+
+            article = root / "article"
+            article.mkdir()
+            git(article, "init")
+            (article / "paper.md").write_text("draft\n", encoding="utf-8")
+            git(article, "add", "paper.md")
+            git(
+                article,
+                "-c",
+                "user.name=Validation Test",
+                "-c",
+                "user.email=validation@example.invalid",
+                "commit",
+                "-m",
+                "article fixture",
+            )
+            (article / "notes.txt").write_text("untracked\n", encoding="utf-8")
+
+            provenance = runner.git_provenance(
+                root,
+                excluded_paths=(("article", "non-executable source"),),
+            )
+            self.assertFalse(provenance["dirty"])
+            self.assertEqual(
+                provenance["status_scope"]["excluded_paths"],
+                ["article"],
+            )
+            excluded = provenance["excluded_path_states"][0]
+            self.assertEqual(excluded["reason"], "non-executable source")
+            self.assertTrue(excluded["parent_status_entries"])
+            self.assertTrue(excluded["independent_worktree"]["dirty"])
+            self.assertIn(
+                "?? notes.txt",
+                excluded["independent_worktree"]["status_entries"],
+            )
+
+            (root / "simulator.cc").write_text("changed\n", encoding="utf-8")
+            changed = runner.git_provenance(
+                root,
+                excluded_paths=(("article", "non-executable source"),),
+            )
+            self.assertTrue(changed["dirty"])
+
     def test_fixture_preserves_first_idx_records_and_rewrites_counts(
         self,
     ) -> None:

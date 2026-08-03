@@ -13,7 +13,7 @@ import run_reduced_lenet_validation as endpoint_runner
 import summarize_reduced_lenet_validation as summarizer
 
 
-CAMPAIGN_SCHEMA_VERSION = 1
+CAMPAIGN_SCHEMA_VERSION = 2
 RUN_MANIFEST_SCHEMA_VERSION = 4
 MATRIX_SCHEMA_VERSION = 3
 EXPECTED_CONFIGURATION_COUNT = 51
@@ -169,7 +169,12 @@ def build_campaign(
             "configuration_count": len(configurations),
         },
         "source_revisions": {
-            "axpike": endpoint_runner.git_provenance(repository_root),
+            "axpike": endpoint_runner.git_provenance(
+                repository_root,
+                excluded_paths=(
+                    endpoint_runner.AXPIKE_PROVENANCE_EXCLUSIONS
+                ),
+            ),
             "adf": endpoint_runner.git_provenance(
                 repository_root / "adele" / "adf"
             ),

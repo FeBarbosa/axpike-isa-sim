@@ -64,7 +64,7 @@ class UniformNReducedMatrixTest(unittest.TestCase):
 
     def test_campaign_identity_allows_exact_resume_only(self) -> None:
         campaign = {
-            "schema_version": 1,
+            "schema_version": matrix_runner.CAMPAIGN_SCHEMA_VERSION,
             "purpose": matrix_runner.PURPOSE,
             "input": {"sha256": "abc"},
         }

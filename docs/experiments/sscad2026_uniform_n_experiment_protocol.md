@@ -259,6 +259,17 @@ Each run record must contain:
 - hashes of raw CSVs, summaries, and logs; and
 - extractor version, invariant results, and any anomaly annotation.
 
+For AxPIKE, dirty-worktree provenance is evaluated over files capable of
+affecting the simulator, experiment automation, or generated executables. The
+independently versioned `paper-sscad2026` article tree is outside that
+executable scope. Its exclusion must be explicit rather than silent: campaign
+schema 2 records the excluded path and reason, the parent repository's tracked
+object and status entry, and the article worktree's observed commit and dirty
+status entries. These fields preserve the article state for traceability while
+preventing unrelated writing artifacts from falsely marking the executable
+scope dirty. A change in any executable-scope file remains a dirty source
+revision and blocks a frozen scientific campaign.
+
 The orchestration must be resumable: a configuration is skipped only when its
 completion record, expected hashes, and validation status are present. A mere
 output directory is not evidence of completion.
