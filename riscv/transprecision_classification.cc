@@ -88,6 +88,106 @@ transprecision_value_class_t classify_raw_fp32_value(uint32_t bits)
   return transprecision_value_class_t::FINITE;
 }
 
+transprecision_value_class_t classify_raw_fp64_value(uint64_t bits)
+{
+  const uint64_t exponent = (bits >> 52) & UINT64_C(0x7ff);
+  const uint64_t fraction = bits & UINT64_C(0x000fffffffffffff);
+  if (exponent == 0)
+    return fraction == 0
+        ? transprecision_value_class_t::ZERO
+        : transprecision_value_class_t::FINITE;
+  if (exponent == UINT64_C(0x7ff))
+    return fraction == 0
+        ? transprecision_value_class_t::INFINITY
+        : transprecision_value_class_t::NAN_VALUE;
+  return transprecision_value_class_t::FINITE;
+}
+
+transprecision_quantization_t make_quantization(
+    transprecision_type_t effective_type,
+    transprecision_value_class_t architectural_value_class,
+    transprecision_value_class_t quantized_value_class,
+    uint64_t architectural_bits, uint64_t quantized_bits,
+    bool overflow = false, bool underflow = false)
+{
+  return {
+    effective_type,
+    architectural_value_class,
+    quantized_value_class,
+    architectural_bits,
+    quantized_bits,
+    architectural_bits != quantized_bits,
+    architectural_value_class == transprecision_value_class_t::FINITE
+        && quantized_value_class == transprecision_value_class_t::ZERO,
+    overflow,
+    underflow,
+  };
+}
+
+uint32_t fp32_max_finite_for_type(transprecision_type_t type)
+{
+  switch (type) {
+    case transprecision_type_t::E5M2:
+      return UINT32_C(0x47600000);
+    case transprecision_type_t::FP16:
+      return UINT32_C(0x477fe000);
+    case transprecision_type_t::FP32:
+      return UINT32_C(0x7f7fffff);
+    case transprecision_type_t::FP64:
+    case transprecision_type_t::UNCLASSIFIED:
+    default:
+      throw std::invalid_argument("effective type exceeds FP32 carrier");
+  }
+}
+
+uint32_t fp32_min_normal_for_type(transprecision_type_t type)
+{
+  switch (type) {
+    case transprecision_type_t::E5M2:
+    case transprecision_type_t::FP16:
+      return UINT32_C(0x38800000);
+    case transprecision_type_t::FP32:
+      return UINT32_C(0x00800000);
+    case transprecision_type_t::FP64:
+    case transprecision_type_t::UNCLASSIFIED:
+    default:
+      throw std::invalid_argument("effective type exceeds FP32 carrier");
+  }
+}
+
+uint64_t fp64_max_finite_for_type(transprecision_type_t type)
+{
+  switch (type) {
+    case transprecision_type_t::E5M2:
+      return UINT64_C(0x40ec000000000000);
+    case transprecision_type_t::FP16:
+      return UINT64_C(0x40effc0000000000);
+    case transprecision_type_t::FP32:
+      return UINT64_C(0x47efffffe0000000);
+    case transprecision_type_t::FP64:
+      return UINT64_C(0x7fefffffffffffff);
+    case transprecision_type_t::UNCLASSIFIED:
+    default:
+      throw std::invalid_argument("unsupported FP64 effective type");
+  }
+}
+
+uint64_t fp64_min_normal_for_type(transprecision_type_t type)
+{
+  switch (type) {
+    case transprecision_type_t::E5M2:
+    case transprecision_type_t::FP16:
+      return UINT64_C(0x3f10000000000000);
+    case transprecision_type_t::FP32:
+      return UINT64_C(0x3810000000000000);
+    case transprecision_type_t::FP64:
+      return UINT64_C(0x0010000000000000);
+    case transprecision_type_t::UNCLASSIFIED:
+    default:
+      throw std::invalid_argument("unsupported FP64 effective type");
+  }
+}
+
 transprecision_classification_t special_classification(
     transprecision_value_class_t value_class, uint64_t bits)
 {
@@ -114,50 +214,42 @@ transprecision_classification_t finite_classification(
   };
 }
 
-uint32_t clear_fp32_fraction_lsb(uint32_t bits, uint8_t bit_count)
+uint32_t clear_fp32_fraction_region(
+    uint32_t bits, uint8_t offset, uint8_t bit_count)
 {
-  if (bit_count > 23)
-    throw std::invalid_argument("FP32 mantissa mask exceeds 23 bits");
+  if (offset > 23 || bit_count > 23 - offset)
+    throw std::invalid_argument("FP32 mantissa mask exceeds carrier fraction");
   if (bit_count == 0)
     return bits;
 
-  const uint32_t ignored_mask = (UINT32_C(1) << bit_count) - UINT32_C(1);
+  const uint32_t ignored_mask =
+      ((UINT32_C(1) << bit_count) - UINT32_C(1)) << offset;
   return bits & ~ignored_mask;
 }
 
-uint64_t clear_fp64_fraction_lsb(uint64_t bits, uint8_t bit_count)
+uint64_t clear_fp64_fraction_region(
+    uint64_t bits, uint8_t offset, uint8_t bit_count)
 {
-  if (bit_count > 52)
-    throw std::invalid_argument("FP64 mantissa mask exceeds 52 bits");
+  if (offset > 52 || bit_count > 52 - offset)
+    throw std::invalid_argument("FP64 mantissa mask exceeds carrier fraction");
   if (bit_count == 0)
     return bits;
 
   const uint64_t ignored_mask =
-      (UINT64_C(1) << bit_count) - UINT64_C(1);
+      ((UINT64_C(1) << bit_count) - UINT64_C(1)) << offset;
   return bits & ~ignored_mask;
 }
 
-void validate_fp32_policy(const transprecision_policy_config_t& policy)
+void validate_policy(const transprecision_policy_config_t& policy)
 {
-  if (policy.fp32_to_e5m2_protected_bits > 21)
-    throw std::invalid_argument(
-        "FP32 to E5M2 protected bits must be between 0 and 21");
-  if (policy.fp32_to_fp16_protected_bits > 13)
-    throw std::invalid_argument(
-        "FP32 to FP16 protected bits must be between 0 and 13");
-}
-
-void validate_fp64_policy(const transprecision_policy_config_t& policy)
-{
-  if (policy.fp64_to_e5m2_protected_bits > 50)
-    throw std::invalid_argument(
-        "FP64 to E5M2 protected bits must be between 0 and 50");
-  if (policy.fp64_to_fp16_protected_bits > 42)
-    throw std::invalid_argument(
-        "FP64 to FP16 protected bits must be between 0 and 42");
-  if (policy.fp64_to_fp32_protected_bits > 29)
-    throw std::invalid_argument(
-        "FP64 to FP32 protected bits must be between 0 and 29");
+  if (policy.fp64_protected_bits > 50)
+    throw std::invalid_argument("FP64 protected bits must be between 0 and 50");
+  if (policy.fp32_protected_bits > 21)
+    throw std::invalid_argument("FP32 protected bits must be between 0 and 21");
+  if (policy.fp16_protected_bits > 8)
+    throw std::invalid_argument("FP16 protected bits must be between 0 and 8");
+  if (policy.e5m2_protected_bits != 0)
+    throw std::invalid_argument("E5M2 protected bits must be zero");
 }
 
 transprecision_classification_t apply_nan_infinity_context(
@@ -183,6 +275,290 @@ transprecision_classification_t apply_operation_context(
 }
 
 } // namespace
+
+transprecision_quantization_t quantize_transprecision_fp32_to_type(
+    uint32_t bits, transprecision_type_t effective_type)
+{
+  const transprecision_value_class_t architectural_value_class =
+      classify_raw_fp32_value(bits);
+  if (architectural_value_class == transprecision_value_class_t::INFINITY
+      || architectural_value_class
+          == transprecision_value_class_t::NAN_VALUE) {
+    if (effective_type != transprecision_type_t::E5M2
+        && effective_type != transprecision_type_t::FP16
+        && effective_type != transprecision_type_t::FP32)
+      throw std::invalid_argument("effective type exceeds FP32 carrier");
+    return make_quantization(effective_type, architectural_value_class,
+        architectural_value_class, bits, bits);
+  }
+
+  uint32_t quantized_bits = bits;
+  const uint32_t magnitude = bits & UINT32_C(0x7fffffff);
+  const bool overflow =
+      architectural_value_class == transprecision_value_class_t::FINITE
+      && magnitude > fp32_max_finite_for_type(effective_type);
+  const bool underflow =
+      architectural_value_class == transprecision_value_class_t::FINITE
+      && magnitude != 0
+      && magnitude < fp32_min_normal_for_type(effective_type);
+  if (overflow) {
+    quantized_bits =
+        (bits & UINT32_C(0x80000000)) | UINT32_C(0x7f800000);
+  }
+  else {
+    switch (effective_type) {
+      case transprecision_type_t::E5M2:
+        quantized_bits = typeSimulationFF(5, 2, bits);
+        break;
+      case transprecision_type_t::FP16:
+        quantized_bits = typeSimulationFF(5, 10, bits);
+        break;
+      case transprecision_type_t::FP32:
+        break;
+      case transprecision_type_t::FP64:
+      case transprecision_type_t::UNCLASSIFIED:
+      default:
+        throw std::invalid_argument("effective type exceeds FP32 carrier");
+    }
+  }
+
+  return make_quantization(effective_type, architectural_value_class,
+      classify_raw_fp32_value(quantized_bits), bits, quantized_bits,
+      overflow, underflow);
+}
+
+transprecision_quantization_t quantize_transprecision_fp64_to_type(
+    uint64_t bits, transprecision_type_t effective_type)
+{
+  const transprecision_value_class_t architectural_value_class =
+      classify_raw_fp64_value(bits);
+  if (architectural_value_class == transprecision_value_class_t::INFINITY
+      || architectural_value_class
+          == transprecision_value_class_t::NAN_VALUE) {
+    if (!transprecision_is_supported_type(effective_type))
+      throw std::invalid_argument("unsupported FP64 effective type");
+    return make_quantization(effective_type, architectural_value_class,
+        architectural_value_class, bits, bits);
+  }
+
+  uint64_t quantized_bits = bits;
+  const uint64_t magnitude = bits & UINT64_C(0x7fffffffffffffff);
+  const bool overflow =
+      architectural_value_class == transprecision_value_class_t::FINITE
+      && magnitude > fp64_max_finite_for_type(effective_type);
+  const bool underflow =
+      architectural_value_class == transprecision_value_class_t::FINITE
+      && magnitude != 0
+      && magnitude < fp64_min_normal_for_type(effective_type);
+  if (overflow) {
+    quantized_bits =
+        (bits & UINT64_C(0x8000000000000000))
+        | UINT64_C(0x7ff0000000000000);
+  }
+  else {
+    switch (effective_type) {
+      case transprecision_type_t::E5M2:
+        quantized_bits = typeSimulationFF64(5, 2, bits);
+        break;
+      case transprecision_type_t::FP16:
+        quantized_bits = typeSimulationFF64(5, 10, bits);
+        break;
+      case transprecision_type_t::FP32:
+        quantized_bits = typeSimulationFF64(8, 23, bits);
+        break;
+      case transprecision_type_t::FP64:
+        break;
+      case transprecision_type_t::UNCLASSIFIED:
+      default:
+        throw std::invalid_argument("unsupported FP64 effective type");
+    }
+  }
+
+  return make_quantization(effective_type, architectural_value_class,
+      classify_raw_fp64_value(quantized_bits), bits, quantized_bits,
+      overflow, underflow);
+}
+
+uint8_t transprecision_mantissa_width(transprecision_type_t type)
+{
+  switch (type) {
+    case transprecision_type_t::E5M2:
+      return 2;
+    case transprecision_type_t::FP16:
+      return 10;
+    case transprecision_type_t::FP32:
+      return 23;
+    case transprecision_type_t::FP64:
+      return 52;
+    case transprecision_type_t::UNCLASSIFIED:
+    default:
+      throw std::invalid_argument("unsupported transprecision type");
+  }
+}
+
+uint8_t transprecision_effective_n(
+    const transprecision_policy_config_t& policy,
+    transprecision_type_t source_type)
+{
+  validate_policy(policy);
+  switch (source_type) {
+    case transprecision_type_t::E5M2:
+      return policy.e5m2_protected_bits;
+    case transprecision_type_t::FP16:
+      return policy.fp16_protected_bits;
+    case transprecision_type_t::FP32:
+      return policy.fp32_protected_bits;
+    case transprecision_type_t::FP64:
+      return policy.fp64_protected_bits;
+    case transprecision_type_t::UNCLASSIFIED:
+    default:
+      throw std::invalid_argument("unsupported source type");
+  }
+}
+
+uint8_t transprecision_candidate_mask_width(
+    const transprecision_policy_config_t& policy,
+    transprecision_type_t source_type,
+    transprecision_type_t candidate_type)
+{
+  if (!transprecision_type_less_than(candidate_type, source_type))
+    throw std::invalid_argument("candidate type must be lower than source type");
+
+  const uint8_t active_difference =
+      transprecision_mantissa_width(source_type)
+      - transprecision_mantissa_width(candidate_type);
+  const uint8_t protected_bits = transprecision_effective_n(
+      policy, source_type);
+  return protected_bits < active_difference
+      ? active_difference - protected_bits
+      : 0;
+}
+
+transprecision_type_t transprecision_effective_type_ceiling(
+    transprecision_type_t effective_type,
+    transprecision_type_t architectural_carrier_type)
+{
+  if (!transprecision_is_supported_type(effective_type)
+      || !transprecision_is_supported_type(architectural_carrier_type))
+    return transprecision_type_t::UNCLASSIFIED;
+  return transprecision_type_less_than(
+      architectural_carrier_type, effective_type)
+      ? architectural_carrier_type
+      : effective_type;
+}
+
+transprecision_classification_t
+classify_transprecision_fp32_quantized_effective_type(
+    uint32_t quantized_bits, transprecision_type_t effective_type,
+    const transprecision_policy_config_t& policy)
+{
+  validate_policy(policy);
+  if (effective_type == transprecision_type_t::FP64
+      || !transprecision_is_supported_type(effective_type))
+    throw std::invalid_argument("effective type exceeds FP32 carrier");
+
+  const auto input = quantize_transprecision_fp32_to_type(
+      quantized_bits, effective_type);
+  if (input.quantized_bits != quantized_bits)
+    throw std::invalid_argument("FP32 carrier input is not quantized to T");
+
+  const auto value_class = classify_raw_fp32_value(quantized_bits);
+  if (value_class == transprecision_value_class_t::ZERO)
+    return zero_classification(quantized_bits);
+  if (value_class == transprecision_value_class_t::INFINITY
+      || value_class == transprecision_value_class_t::NAN_VALUE) {
+    auto result = special_classification(value_class, quantized_bits);
+    result.type = effective_type;
+    return result;
+  }
+
+  const uint8_t carrier_mantissa = 23;
+  const uint8_t source_mantissa =
+      transprecision_mantissa_width(effective_type);
+  const uint8_t carrier_offset = carrier_mantissa - source_mantissa;
+  const transprecision_type_t candidates[] = {
+    transprecision_type_t::E5M2,
+    transprecision_type_t::FP16,
+  };
+  for (transprecision_type_t candidate : candidates) {
+    if (!transprecision_type_less_than(candidate, effective_type))
+      continue;
+
+    const uint8_t mask_width = transprecision_candidate_mask_width(
+        policy, effective_type, candidate);
+    const uint32_t candidate_bits = clear_fp32_fraction_region(
+        quantized_bits, carrier_offset, mask_width);
+    const uint8_t candidate_exponent = 5;
+    const uint8_t candidate_mantissa =
+        transprecision_mantissa_width(candidate);
+    if (typeSimulationFF(
+            candidate_exponent, candidate_mantissa, candidate_bits)
+        == candidate_bits) {
+      return finite_classification(candidate, candidate_bits, quantized_bits,
+          (candidate_bits & UINT32_C(0x7fffffff)) == 0);
+    }
+  }
+
+  return finite_classification(
+      effective_type, quantized_bits, quantized_bits);
+}
+
+transprecision_classification_t
+classify_transprecision_fp64_quantized_effective_type(
+    uint64_t quantized_bits, transprecision_type_t effective_type,
+    const transprecision_policy_config_t& policy)
+{
+  validate_policy(policy);
+  if (!transprecision_is_supported_type(effective_type))
+    throw std::invalid_argument("unsupported FP64 effective type");
+
+  const auto input = quantize_transprecision_fp64_to_type(
+      quantized_bits, effective_type);
+  if (input.quantized_bits != quantized_bits)
+    throw std::invalid_argument("FP64 carrier input is not quantized to T");
+
+  const auto value_class = classify_raw_fp64_value(quantized_bits);
+  if (value_class == transprecision_value_class_t::ZERO)
+    return zero_classification(quantized_bits);
+  if (value_class == transprecision_value_class_t::INFINITY
+      || value_class == transprecision_value_class_t::NAN_VALUE) {
+    auto result = special_classification(value_class, quantized_bits);
+    result.type = effective_type;
+    return result;
+  }
+
+  const uint8_t carrier_mantissa = 52;
+  const uint8_t source_mantissa =
+      transprecision_mantissa_width(effective_type);
+  const uint8_t carrier_offset = carrier_mantissa - source_mantissa;
+  const transprecision_type_t candidates[] = {
+    transprecision_type_t::E5M2,
+    transprecision_type_t::FP16,
+    transprecision_type_t::FP32,
+  };
+  for (transprecision_type_t candidate : candidates) {
+    if (!transprecision_type_less_than(candidate, effective_type))
+      continue;
+
+    const uint8_t mask_width = transprecision_candidate_mask_width(
+        policy, effective_type, candidate);
+    const uint64_t candidate_bits = clear_fp64_fraction_region(
+        quantized_bits, carrier_offset, mask_width);
+    const uint8_t candidate_exponent =
+        candidate == transprecision_type_t::FP32 ? 8 : 5;
+    const uint8_t candidate_mantissa =
+        transprecision_mantissa_width(candidate);
+    if (typeSimulationFF64(
+            candidate_exponent, candidate_mantissa, candidate_bits)
+        == candidate_bits) {
+      return finite_classification(candidate, candidate_bits, quantized_bits,
+          (candidate_bits & UINT64_C(0x7fffffffffffffff)) == 0);
+    }
+  }
+
+  return finite_classification(
+      effective_type, quantized_bits, quantized_bits);
+}
 
 void trace_transprecision_external_nan(uint8_t carrier_bits, uint64_t bits,
     size_t destination_register, uint32_t instruction_id, uint64_t pc,
@@ -234,117 +610,94 @@ classify_transprecision_fp64_load(uint64_t bits)
 transprecision_classification_t classify_transprecision_fp32(uint32_t bits,
     const transprecision_policy_config_t& policy)
 {
-  validate_fp32_policy(policy);
-
-  const uint32_t magnitude = bits & UINT32_C(0x7fffffff);
-  const uint32_t exponent = bits & UINT32_C(0x7f800000);
-  const uint32_t fraction = bits & UINT32_C(0x007fffff);
-
-  if (magnitude == 0)
-    return zero_classification(bits);
-  if (exponent == UINT32_C(0x7f800000))
-    return special_classification(fraction == 0
-        ? transprecision_value_class_t::INFINITY
-        : transprecision_value_class_t::NAN_VALUE, bits);
-
-  const uint8_t e5m2_ignored_bits =
-      21 - policy.fp32_to_e5m2_protected_bits;
-  const uint32_t e5m2_candidate_bits =
-      clear_fp32_fraction_lsb(bits, e5m2_ignored_bits);
-  if (typeSimulationFF(5, 2, e5m2_candidate_bits)
-      == e5m2_candidate_bits) {
-    return finite_classification(
-        transprecision_type_t::E5M2, e5m2_candidate_bits, bits,
-        magnitude != 0
-            && (e5m2_candidate_bits & UINT32_C(0x7fffffff)) == 0);
-  }
-
-  const uint8_t fp16_ignored_bits =
-      13 - policy.fp32_to_fp16_protected_bits;
-  const uint32_t fp16_candidate_bits =
-      clear_fp32_fraction_lsb(bits, fp16_ignored_bits);
-  if (typeSimulationFF(5, 10, fp16_candidate_bits) == fp16_candidate_bits) {
-    return finite_classification(
-        transprecision_type_t::FP16, fp16_candidate_bits, bits,
-        magnitude != 0
-            && (fp16_candidate_bits & UINT32_C(0x7fffffff)) == 0);
-  }
-
-  return finite_classification(transprecision_type_t::FP32, bits, bits);
+  auto result = classify_transprecision_fp32_quantized_effective_type(
+      bits, transprecision_type_t::FP32, policy);
+  if (result.value_class == transprecision_value_class_t::INFINITY
+      || result.value_class == transprecision_value_class_t::NAN_VALUE)
+    result.type = transprecision_type_t::UNCLASSIFIED;
+  return result;
 }
 
 transprecision_classification_t classify_transprecision_fp64(uint64_t bits,
     const transprecision_policy_config_t& policy)
 {
-  validate_fp64_policy(policy);
+  auto result = classify_transprecision_fp64_quantized_effective_type(
+      bits, transprecision_type_t::FP64, policy);
+  if (result.value_class == transprecision_value_class_t::INFINITY
+      || result.value_class == transprecision_value_class_t::NAN_VALUE)
+    result.type = transprecision_type_t::UNCLASSIFIED;
+  return result;
+}
 
-  const uint64_t magnitude = bits & UINT64_C(0x7fffffffffffffff);
-  const uint64_t exponent = bits & UINT64_C(0x7ff0000000000000);
-  const uint64_t fraction = bits & UINT64_C(0x000fffffffffffff);
-
-  if (magnitude == 0)
-    return zero_classification(bits);
-  if (exponent == UINT64_C(0x7ff0000000000000))
-    return special_classification(fraction == 0
-        ? transprecision_value_class_t::INFINITY
-        : transprecision_value_class_t::NAN_VALUE, bits);
-
-  const uint8_t e5m2_ignored_bits =
-      50 - policy.fp64_to_e5m2_protected_bits;
-  const uint64_t e5m2_candidate_bits =
-      clear_fp64_fraction_lsb(bits, e5m2_ignored_bits);
-  if (typeSimulationFF64(5, 2, e5m2_candidate_bits)
-      == e5m2_candidate_bits) {
-    return finite_classification(
-        transprecision_type_t::E5M2, e5m2_candidate_bits, bits,
-        magnitude != 0
-            && (e5m2_candidate_bits
-                & UINT64_C(0x7fffffffffffffff)) == 0);
+transprecision_operation_result_t analyze_transprecision_fp32_operation_result(
+    uint32_t bits, transprecision_type_t intended_execution_type,
+    const transprecision_policy_config_t& policy)
+{
+  const transprecision_type_t effective_type =
+      transprecision_effective_type_ceiling(
+          intended_execution_type, transprecision_type_t::FP32);
+  if (!transprecision_is_supported_type(effective_type)) {
+    const auto value_class = classify_raw_fp32_value(bits);
+    return {
+      special_classification(value_class, bits),
+      make_quantization(effective_type, value_class, value_class, bits, bits),
+      false,
+    };
   }
 
-  const uint8_t fp16_ignored_bits =
-      42 - policy.fp64_to_fp16_protected_bits;
-  const uint64_t fp16_candidate_bits =
-      clear_fp64_fraction_lsb(bits, fp16_ignored_bits);
-  if (typeSimulationFF64(5, 10, fp16_candidate_bits)
-      == fp16_candidate_bits) {
-    return finite_classification(
-        transprecision_type_t::FP16, fp16_candidate_bits, bits,
-        magnitude != 0
-            && (fp16_candidate_bits
-                & UINT64_C(0x7fffffffffffffff)) == 0);
+  const auto quantization =
+      quantize_transprecision_fp32_to_type(bits, effective_type);
+  return {
+    classify_transprecision_fp32_quantized_effective_type(
+        static_cast<uint32_t>(quantization.quantized_bits),
+        effective_type, policy),
+    quantization,
+    transprecision_type_less_than(
+        effective_type, transprecision_type_t::FP32),
+  };
+}
+
+transprecision_operation_result_t analyze_transprecision_fp64_operation_result(
+    uint64_t bits, transprecision_type_t intended_execution_type,
+    const transprecision_policy_config_t& policy)
+{
+  const transprecision_type_t effective_type =
+      transprecision_effective_type_ceiling(
+          intended_execution_type, transprecision_type_t::FP64);
+  if (!transprecision_is_supported_type(effective_type)) {
+    const auto value_class = classify_raw_fp64_value(bits);
+    return {
+      special_classification(value_class, bits),
+      make_quantization(effective_type, value_class, value_class, bits, bits),
+      false,
+    };
   }
 
-  const uint8_t fp32_ignored_bits =
-      29 - policy.fp64_to_fp32_protected_bits;
-  const uint64_t fp32_candidate_bits =
-      clear_fp64_fraction_lsb(bits, fp32_ignored_bits);
-  if (typeSimulationFF64(8, 23, fp32_candidate_bits)
-      == fp32_candidate_bits) {
-    return finite_classification(
-        transprecision_type_t::FP32, fp32_candidate_bits, bits,
-        magnitude != 0
-            && (fp32_candidate_bits
-                & UINT64_C(0x7fffffffffffffff)) == 0);
-  }
-
-  return finite_classification(transprecision_type_t::FP64, bits, bits);
+  const auto quantization =
+      quantize_transprecision_fp64_to_type(bits, effective_type);
+  return {
+    classify_transprecision_fp64_quantized_effective_type(
+        quantization.quantized_bits, effective_type, policy),
+    quantization,
+    transprecision_type_less_than(
+        effective_type, transprecision_type_t::FP64),
+  };
 }
 
 transprecision_classification_t classify_transprecision_fp32_operation_result(
     uint32_t bits, transprecision_type_t intended_execution_type,
     const transprecision_policy_config_t& policy)
 {
-  return apply_operation_context(
-      classify_transprecision_fp32(bits, policy), intended_execution_type);
+  return analyze_transprecision_fp32_operation_result(
+      bits, intended_execution_type, policy).classification;
 }
 
 transprecision_classification_t classify_transprecision_fp64_operation_result(
     uint64_t bits, transprecision_type_t intended_execution_type,
     const transprecision_policy_config_t& policy)
 {
-  return apply_operation_context(
-      classify_transprecision_fp64(bits, policy), intended_execution_type);
+  return analyze_transprecision_fp64_operation_result(
+      bits, intended_execution_type, policy).classification;
 }
 
 transprecision_classification_t classify_transprecision_fp32_architectural_write(

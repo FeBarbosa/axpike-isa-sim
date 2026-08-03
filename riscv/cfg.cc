@@ -23,18 +23,12 @@ struct transprecision_policy_field_t
   uint8_t maximum;
 };
 
-const std::array<transprecision_policy_field_t, 5>
+const std::array<transprecision_policy_field_t, 4>
     transprecision_policy_fields = {{
-      {"fp32-e5m2",
-          &transprecision_policy_config_t::fp32_to_e5m2_protected_bits, 21},
-      {"fp32-fp16",
-          &transprecision_policy_config_t::fp32_to_fp16_protected_bits, 13},
-      {"fp64-e5m2",
-          &transprecision_policy_config_t::fp64_to_e5m2_protected_bits, 50},
-      {"fp64-fp16",
-          &transprecision_policy_config_t::fp64_to_fp16_protected_bits, 42},
-      {"fp64-fp32",
-          &transprecision_policy_config_t::fp64_to_fp32_protected_bits, 29},
+      {"fp64", &transprecision_policy_config_t::fp64_protected_bits, 50},
+      {"fp32", &transprecision_policy_config_t::fp32_protected_bits, 21},
+      {"fp16", &transprecision_policy_config_t::fp16_protected_bits, 8},
+      {"e5m2", &transprecision_policy_config_t::e5m2_protected_bits, 0},
     }};
 
 } // namespace
@@ -65,7 +59,7 @@ transprecision_policy_config_t parse_transprecision_policy_config(
         || separator + 1 == entry.size()
         || entry.find(':', separator + 1) != std::string::npos) {
       throw std::invalid_argument(
-          "each entry must use the form transition:value");
+          "each entry must use the form type:value");
     }
 
     const std::string name = entry.substr(0, separator);
@@ -78,9 +72,9 @@ transprecision_policy_config_t parse_transprecision_policy_config(
       }
     }
     if (field_index == transprecision_policy_fields.size())
-      throw std::invalid_argument("unknown transition '" + name + "'");
+      throw std::invalid_argument("unknown source type '" + name + "'");
     if (seen[field_index])
-      throw std::invalid_argument("duplicate transition '" + name + "'");
+      throw std::invalid_argument("duplicate source type '" + name + "'");
 
     for (char character : value_text) {
       if (!std::isdigit(static_cast<unsigned char>(character))) {
@@ -106,7 +100,7 @@ transprecision_policy_config_t parse_transprecision_policy_config(
 
   if (entry_count != transprecision_policy_fields.size()) {
     throw std::invalid_argument(
-        "the vector must define all five transitions exactly once");
+        "the vector must define all four source types exactly once");
   }
 
   return policy;

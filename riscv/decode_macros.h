@@ -170,7 +170,6 @@ do { \
   const transprecision_type_t __tp_observed_effective_type = (type); \
   const transprecision_type_t __tp_operands[] = {__VA_ARGS__}; \
   STATE.last_transprecision_effective_type = __tp_observed_effective_type; \
-  STATE.transprecision_effective_type_observations++; \
   STATE.transprecision_counters.record_effective_type( \
       p->ax_control.cur_insn_id, __tp_observed_effective_type, __tp_operands, \
       sizeof(__tp_operands) / sizeof(__tp_operands[0])); \
@@ -271,11 +270,14 @@ do { \
 #define WRITE_FREG_F_OPERATION_RESULT(reg, value, intended_type) \
 do { \
   auto __tp_freg_wdata = (value); \
-  const transprecision_type_t __tp_freg_intended_type = (intended_type); \
-  const auto __tp_freg_classification = \
-      classify_transprecision_fp32_operation_result( \
+  const transprecision_type_t __tp_freg_intended_type = \
+      transprecision_effective_type_ceiling( \
+          (intended_type), transprecision_type_t::FP32); \
+  const auto __tp_freg_result = \
+      analyze_transprecision_fp32_operation_result( \
           __tp_freg_wdata.v, __tp_freg_intended_type, \
           p->get_cfg().transprecision_policy); \
+  const auto& __tp_freg_classification = __tp_freg_result.classification; \
   WRITE_FREG((reg), \
       f32(static_cast<uint32_t>(__tp_freg_classification.selected_bits))); \
   STATE.FPR_TAGS.write((reg), __tp_freg_classification.type); \
@@ -283,25 +285,40 @@ do { \
       __tp_freg_classification.type); \
   STATE.transprecision_counters.record_operation_result( \
       transprecision_value_class_bucket(__tp_freg_classification.value_class), \
-      __tp_freg_intended_type, __tp_freg_classification.type, \
+      transprecision_type_t::FP32, __tp_freg_intended_type, \
+      __tp_freg_classification.type, \
+      __tp_freg_result.quantization_performed, \
+      __tp_freg_result.quantization.value_changed, \
+      __tp_freg_result.quantization.changed_to_zero, \
+      __tp_freg_result.quantization.overflow, \
+      __tp_freg_result.quantization.underflow, \
       __tp_freg_classification.value_was_masked, \
       __tp_freg_classification.masked_to_zero); \
 } while (0)
 #define WRITE_FREG_D_OPERATION_RESULT(reg, value, intended_type) \
 do { \
   auto __tp_freg_wdata = (value); \
-  const transprecision_type_t __tp_freg_intended_type = (intended_type); \
-  const auto __tp_freg_classification = \
-      classify_transprecision_fp64_operation_result( \
+  const transprecision_type_t __tp_freg_intended_type = \
+      transprecision_effective_type_ceiling( \
+          (intended_type), transprecision_type_t::FP64); \
+  const auto __tp_freg_result = \
+      analyze_transprecision_fp64_operation_result( \
           __tp_freg_wdata.v, __tp_freg_intended_type, \
           p->get_cfg().transprecision_policy); \
+  const auto& __tp_freg_classification = __tp_freg_result.classification; \
   WRITE_FREG((reg), f64(__tp_freg_classification.selected_bits)); \
   STATE.FPR_TAGS.write((reg), __tp_freg_classification.type); \
   STATE.transprecision_counters.record_write_tag( \
       __tp_freg_classification.type); \
   STATE.transprecision_counters.record_operation_result( \
       transprecision_value_class_bucket(__tp_freg_classification.value_class), \
-      __tp_freg_intended_type, __tp_freg_classification.type, \
+      transprecision_type_t::FP64, __tp_freg_intended_type, \
+      __tp_freg_classification.type, \
+      __tp_freg_result.quantization_performed, \
+      __tp_freg_result.quantization.value_changed, \
+      __tp_freg_result.quantization.changed_to_zero, \
+      __tp_freg_result.quantization.overflow, \
+      __tp_freg_result.quantization.underflow, \
       __tp_freg_classification.value_was_masked, \
       __tp_freg_classification.masked_to_zero); \
 } while (0)

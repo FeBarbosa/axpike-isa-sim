@@ -274,34 +274,33 @@ void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
 
     fp << "\"Category\",\"Instruction\",\"From\",\"To\",\"Type\",\"Class\",\"Value\""
        << std::endl;
-    fp << "\"policy_protected_bits\",\"\",\"FP32\",\"E5M2\",\"\",\"\","
-       << static_cast<unsigned>(policy.fp32_to_e5m2_protected_bits)
+    fp << "\"policy_version\",\"\",\"\",\"\","
+       << "\"effective-type-quantization-v4\",\"\",4"
        << std::endl;
-    fp << "\"policy_protected_bits\",\"\",\"FP32\",\"FP16\",\"\",\"\","
-       << static_cast<unsigned>(policy.fp32_to_fp16_protected_bits)
+    fp << "\"policy_protected_bits\",\"\",\"\",\"\",\"FP64\",\"\","
+       << static_cast<unsigned>(policy.fp64_protected_bits)
        << std::endl;
-    fp << "\"policy_protected_bits\",\"\",\"FP64\",\"E5M2\",\"\",\"\","
-       << static_cast<unsigned>(policy.fp64_to_e5m2_protected_bits)
+    fp << "\"policy_protected_bits\",\"\",\"\",\"\",\"FP32\",\"\","
+       << static_cast<unsigned>(policy.fp32_protected_bits)
        << std::endl;
-    fp << "\"policy_protected_bits\",\"\",\"FP64\",\"FP16\",\"\",\"\","
-       << static_cast<unsigned>(policy.fp64_to_fp16_protected_bits)
+    fp << "\"policy_protected_bits\",\"\",\"\",\"\",\"FP16\",\"\","
+       << static_cast<unsigned>(policy.fp16_protected_bits)
        << std::endl;
-    fp << "\"policy_protected_bits\",\"\",\"FP64\",\"FP32\",\"\",\"\","
-       << static_cast<unsigned>(policy.fp64_to_fp32_protected_bits)
+    fp << "\"policy_protected_bits\",\"\",\"\",\"\",\"E5M2\",\"\","
+       << static_cast<unsigned>(policy.e5m2_protected_bits)
        << std::endl;
-    fp << "\"transprecision_effective_type_observations\", "
-       << "\"\",\"\",\"\",\"\",\"\", "
-       << p->state.transprecision_effective_type_observations << std::endl;
-    fp << "\"last_transprecision_effective_type\", "
-       << "\"\",\"\",\"\",\""
-       << transprecision_type_name(p->state.last_transprecision_effective_type)
-       << "\",\"\", 0" << std::endl;
     fp << "\"operand_unclassified_total\", "
        << "\"\",\"\",\"\",\"\",\"\", "
        << counters.operand_unclassified_total << std::endl;
-    fp << "\"masked_to_zero_total\", "
+    fp << "\"result_tag_reduction_to_zero_total\", "
        << "\"\",\"\",\"\",\"\",\"\", "
-       << counters.masked_to_zero_total << std::endl;
+       << counters.result_tag_reduction_to_zero_total << std::endl;
+    fp << "\"external_write_masked_to_zero_total\", "
+       << "\"\",\"\",\"\",\"\",\"\", "
+       << counters.external_write_masked_to_zero_total << std::endl;
+    fp << "\"invalid_result_promotion_total\", "
+       << "\"\",\"\",\"\",\"\",\"\", "
+       << counters.invalid_result_promotion_total << std::endl;
     fp << "\"lazy_reclassification_total\", "
        << "\"\",\"\",\"\",\"\",\"\", "
        << counters.lazy_reclassification_total << std::endl;
@@ -313,10 +312,6 @@ void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
        << counters.fp64_load_nan_boxed_fp32_effective_total << std::endl;
 
     for (size_t type = 0; type < transprecision_type_bucket_count; type++) {
-      fp << "\"effective_type_total\", "
-         << "\"\",\"\",\"\",\"" << transprecision_type_bucket_name(type)
-         << "\",\"\", " << counters.effective_type_total[type]
-         << std::endl;
       fp << "\"write_tag_total\", "
          << "\"\",\"\",\"\",\"" << transprecision_type_bucket_name(type)
          << "\",\"\", " << counters.write_tag_total[type]
@@ -342,6 +337,45 @@ void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
 
     const size_t supported_type_count =
         transprecision_type_bucket_count - 1;
+    const size_t fp32_bucket =
+        transprecision_type_bucket(transprecision_type_t::FP32);
+    const size_t fp64_bucket =
+        transprecision_type_bucket(transprecision_type_t::FP64);
+    for (size_t carrier : {fp32_bucket, fp64_bucket}) {
+      for (size_t effective = 0; effective < carrier; effective++) {
+        fp << "\"result_quantization_total_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(carrier)
+           << "\",\"" << transprecision_type_bucket_name(effective)
+           << "\",\"\",\"\", "
+           << counters.result_quantization_total_from_to[
+                  carrier][effective] << std::endl;
+        fp << "\"result_quantization_changed_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(carrier)
+           << "\",\"" << transprecision_type_bucket_name(effective)
+           << "\",\"\",\"\", "
+           << counters.result_quantization_changed_from_to[
+                  carrier][effective] << std::endl;
+        fp << "\"result_quantization_to_zero_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(carrier)
+           << "\",\"" << transprecision_type_bucket_name(effective)
+           << "\",\"\",\"\", "
+           << counters.result_quantization_to_zero_from_to[
+                  carrier][effective] << std::endl;
+        fp << "\"result_quantization_overflow_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(carrier)
+           << "\",\"" << transprecision_type_bucket_name(effective)
+           << "\",\"\",\"\", "
+           << counters.result_quantization_overflow_from_to[
+                  carrier][effective] << std::endl;
+        fp << "\"result_quantization_underflow_from_to\", "
+           << "\"\",\"" << transprecision_type_bucket_name(carrier)
+           << "\",\"" << transprecision_type_bucket_name(effective)
+           << "\",\"\",\"\", "
+           << counters.result_quantization_underflow_from_to[
+                  carrier][effective] << std::endl;
+      }
+    }
+
     for (size_t from = 0; from < supported_type_count; from++) {
       for (size_t to = 0; to < supported_type_count; to++) {
         if (from < to) {
@@ -350,29 +384,21 @@ void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
              << "\",\"" << transprecision_type_bucket_name(to)
              << "\",\"\",\"\", "
              << counters.operand_promotion_from_to[from][to] << std::endl;
-          fp << "\"result_promotion_from_to\", "
-             << "\"\",\"" << transprecision_type_bucket_name(from)
-             << "\",\"" << transprecision_type_bucket_name(to)
-             << "\",\"\",\"\", "
-             << counters.result_promotion_from_to[from][to] << std::endl;
         }
         else if (from > to) {
-          fp << "\"result_demotion_exact_from_to\", "
+          fp << "\"result_tag_reduction_total_from_to\", "
              << "\"\",\"" << transprecision_type_bucket_name(from)
              << "\",\"" << transprecision_type_bucket_name(to)
              << "\",\"\",\"\", "
-             << counters.result_demotion_exact_from_to[from][to]
+             << counters.result_tag_reduction_total_from_to[from][to]
              << std::endl;
-          fp << "\"result_demotion_masked_from_to\", "
+          fp << "\"result_tag_reduction_changed_from_to\", "
              << "\"\",\"" << transprecision_type_bucket_name(from)
              << "\",\"" << transprecision_type_bucket_name(to)
              << "\",\"\",\"\", "
-             << counters.result_demotion_masked_from_to[from][to]
+             << counters.result_tag_reduction_changed_from_to[from][to]
              << std::endl;
-          if (from == transprecision_type_bucket(
-                  transprecision_type_t::FP32)
-              || from == transprecision_type_bucket(
-                  transprecision_type_t::FP64)) {
+          if (from == fp32_bucket || from == fp64_bucket) {
             fp << "\"external_write_masked_from_to\", "
                << "\"\",\"" << transprecision_type_bucket_name(from)
                << "\",\"" << transprecision_type_bucket_name(to)

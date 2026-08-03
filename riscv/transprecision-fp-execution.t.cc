@@ -10,7 +10,6 @@ struct transprecision_execution_state_t
   transprecision_tag_file_t<NFPR> FPR_TAGS;
   transprecision_fp64_load_boxing_file_t<NFPR> FPR_FP64_LOAD_BOXING;
   transprecision_type_t last_transprecision_effective_type;
-  uint64_t transprecision_effective_type_observations;
   transprecision_counters_t transprecision_counters;
   float32_t f32_regs[NFPR];
   float64_t f64_regs[NFPR];
@@ -62,6 +61,8 @@ struct transprecision_execution_processor_t
 static transprecision_execution_state_t execution_state;
 static transprecision_execution_write_t last_write;
 static transprecision_execution_write_t last_xwrite;
+static uint_fast8_t last_fp_exceptions;
+static uint_fast8_t execution_rounding_mode;
 
 static void reset_execution_context()
 {
@@ -69,7 +70,6 @@ static void reset_execution_context()
   execution_state.FPR_FP64_LOAD_BOXING.reset();
   execution_state.last_transprecision_effective_type =
       transprecision_type_t::UNCLASSIFIED;
-  execution_state.transprecision_effective_type_observations = 0;
   execution_state.transprecision_counters.reset(8);
   execution_policy = transprecision_policy_config_t();
   for (size_t i = 0; i < NFPR; ++i) {
@@ -80,6 +80,8 @@ static void reset_execution_context()
   last_write.bits = UINT64_MAX;
   last_xwrite.reg = UINT64_MAX;
   last_xwrite.bits = UINT64_MAX;
+  last_fp_exceptions = 0;
+  execution_rounding_mode = softfloat_round_near_even;
   softfloat_exceptionFlags = 0;
 }
 
@@ -103,6 +105,12 @@ static void record_execution_xwrite(uint64_t reg, uint64_t value)
 {
   last_xwrite.reg = reg;
   last_xwrite.bits = value;
+}
+
+static void record_fp_exceptions()
+{
+  last_fp_exceptions = softfloat_exceptionFlags;
+  softfloat_exceptionFlags = 0;
 }
 
 // Keep this test focused on the instruction body and transprecision macros.
@@ -176,8 +184,8 @@ static void record_execution_xwrite(uint64_t reg, uint64_t value)
 #define WRITE_FRD_D(value) record_execution_write(insn.rd(), value)
 #define require_either_extension(A, B) ((void) 0)
 #define require_fp ((void) 0)
-#define set_fp_exceptions softfloat_exceptionFlags = 0
-#define RM softfloat_round_near_even
+#define set_fp_exceptions record_fp_exceptions()
+#define RM execution_rounding_mode
 
 static insn_t insn_with_fp_regs(uint64_t rd, uint64_t rs1, uint64_t rs2,
     uint64_t rs3 = 0)
@@ -341,7 +349,9 @@ static void check_fadd_s_finite_result_reclassification()
   assert(last_write.bits == UINT32_C(0x40000000));
   assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::E5M2);
   assert(execution_state.transprecision_counters
-      .result_demotion_exact_from_to[2][0] == 1);
+      .result_tag_reduction_total_from_to[2][0] == 1);
+  assert(execution_state.transprecision_counters
+      .result_tag_reduction_changed_from_to[2][0] == 0);
   assert(execution_state.transprecision_counters.operation_result_class_total[0]
       == 1);
 }
@@ -372,8 +382,7 @@ static void check_fadd_s_recovers_unclassified_operand()
 static void check_lazy_reclassification_uses_exact_policy()
 {
   reset_execution_context();
-  execution_policy.fp32_to_e5m2_protected_bits = 0;
-  execution_policy.fp32_to_fp16_protected_bits = 0;
+  execution_policy.fp32_protected_bits = 0;
 
   execution_state.f32_regs[1] = f32(UINT32_C(0x3f900001));
   softfloat_exceptionFlags = softfloat_flag_inexact;
@@ -445,7 +454,6 @@ static void check_fclass_s_observes_unary_effective_type()
   assert(last_xwrite.bits == UINT64_C(0x40));
   assert(execution_state.last_transprecision_effective_type
       == transprecision_type_t::E5M2);
-  assert(execution_state.transprecision_effective_type_observations == 1);
 }
 
 static void check_flt_s_observes_binary_effective_type()
@@ -463,7 +471,6 @@ static void check_flt_s_observes_binary_effective_type()
   assert(last_xwrite.bits == 1);
   assert(execution_state.last_transprecision_effective_type
       == transprecision_type_t::FP32);
-  assert(execution_state.transprecision_effective_type_observations == 1);
 }
 
 static void check_flt_s_recovers_before_observation()
@@ -504,6 +511,66 @@ static void check_fmadd_s_ternary_effective_type()
   assert((last_write.bits & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000));
   assert((last_write.bits & UINT32_C(0x007fffff)) != 0);
   assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::FP32);
+  assert((last_fp_exceptions & softfloat_flag_invalid) != 0);
+}
+
+static void check_fmadd_s_quantized_result_persists()
+{
+  reset_execution_context();
+
+  execution_state.f32_regs[1] = f32(UINT32_C(0x3f8cc000));
+  execution_state.f32_regs[2] = f32(UINT32_C(0x3f8cc000));
+  execution_state.f32_regs[3] = f32(UINT32_C(0x00000000));
+  execution_state.FPR_TAGS.write(1, transprecision_type_t::FP16);
+  execution_state.FPR_TAGS.write(2, transprecision_type_t::FP16);
+  execution_state.FPR_TAGS.write(3, transprecision_type_t::E5M2);
+
+  execute_fmadd_s(insn_with_fp_regs(5, 1, 2, 3));
+
+  assert(last_write.reg == 5);
+  assert(last_write.bits == UINT32_C(0x3f9ac000));
+  assert(execution_state.f32_regs[5].v == UINT32_C(0x3f9ac000));
+  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::FP16);
+  assert(execution_state.transprecision_counters
+      .result_quantization_total_from_to[2][1] == 1);
+  assert(execution_state.transprecision_counters
+      .result_quantization_changed_from_to[2][1] == 1);
+  assert(execution_state.transprecision_counters
+      .invalid_result_promotion_total == 0);
+
+  execution_state.f32_regs[4] = f32(UINT32_C(0x00000000));
+  execution_state.FPR_TAGS.write(4, transprecision_type_t::E5M2);
+  execute_fadd_s(insn_with_fp_regs(6, 5, 4));
+
+  assert(last_write.reg == 6);
+  assert(last_write.bits == UINT32_C(0x3f9ac000));
+  assert(execution_state.FPR_TAGS.read(6) == transprecision_type_t::FP16);
+}
+
+static void check_fadd_s_effective_overflow_propagates_without_flags()
+{
+  reset_execution_context();
+
+  execution_state.f32_regs[1] = f32(UINT32_C(0x477fe000));
+  execution_state.f32_regs[2] = f32(UINT32_C(0x477fe000));
+  execution_state.FPR_TAGS.write(1, transprecision_type_t::FP16);
+  execution_state.FPR_TAGS.write(2, transprecision_type_t::FP16);
+
+  execute_fadd_s(insn_with_fp_regs(5, 1, 2));
+
+  assert(last_write.reg == 5);
+  assert(last_write.bits == UINT32_C(0x7f800000));
+  assert(execution_state.f32_regs[5].v == UINT32_C(0x7f800000));
+  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::FP16);
+  assert(last_fp_exceptions == 0);
+  assert(execution_state.transprecision_counters
+      .result_quantization_total_from_to[2][1] == 1);
+  assert(execution_state.transprecision_counters
+      .result_quantization_changed_from_to[2][1] == 1);
+  assert(execution_state.transprecision_counters
+      .result_quantization_overflow_from_to[2][1] == 1);
+  assert(execution_state.transprecision_counters
+      .result_quantization_underflow_from_to[2][1] == 0);
 }
 
 static void check_fadd_d_observable_promotion()
@@ -537,9 +604,7 @@ static void check_fcvt_d_s_uses_source_effective_type()
   assert(last_write.bits == UINT64_C(0x3ff0000000000000));
   assert(execution_state.last_transprecision_effective_type
       == transprecision_type_t::E5M2);
-  assert(execution_state.transprecision_effective_type_observations == 1);
   assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::E5M2);
-  assert(execution_state.transprecision_counters.effective_type_total[0] == 1);
   assert(execution_state.transprecision_counters
       .effective_type_by_instruction[5][0] == 1);
   assert(execution_state.transprecision_counters.write_tag_total[0] == 1);
@@ -560,9 +625,7 @@ static void check_fcvt_s_d_uses_source_effective_type()
   assert(last_write.bits == UINT32_C(0x3f800000));
   assert(execution_state.last_transprecision_effective_type
       == transprecision_type_t::E5M2);
-  assert(execution_state.transprecision_effective_type_observations == 1);
   assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::E5M2);
-  assert(execution_state.transprecision_counters.effective_type_total[0] == 1);
   assert(execution_state.transprecision_counters
       .effective_type_by_instruction[6][0] == 1);
   assert(execution_state.transprecision_counters.write_tag_total[0] == 1);
@@ -570,10 +633,53 @@ static void check_fcvt_s_d_uses_source_effective_type()
       == 1);
 }
 
+static void check_fcvt_s_d_limits_result_type_to_fp32()
+{
+  reset_execution_context();
+
+  execution_state.f64_regs[1] =
+      f64(UINT64_C(0x3ff199999999999a));
+  execution_state.FPR_TAGS.write(1, transprecision_type_t::FP64);
+
+  execute_fcvt_s_d(insn_with_fp_regs(5, 1, 0));
+
+  assert(last_write.reg == 5);
+  assert(last_write.bits == UINT32_C(0x3f8ccccd));
+  assert(execution_state.last_transprecision_effective_type
+      == transprecision_type_t::FP64);
+  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::FP32);
+  assert(execution_state.transprecision_counters
+      .invalid_result_promotion_total == 0);
+}
+
+static void check_fcvt_s_d_rounding_and_fflags_boundaries()
+{
+  reset_execution_context();
+
+  execution_state.f64_regs[1] =
+      f64(UINT64_C(0x3ff0000010000000));
+  execution_state.FPR_TAGS.write(1, transprecision_type_t::FP64);
+  execution_rounding_mode = softfloat_round_near_even;
+
+  execute_fcvt_s_d(insn_with_fp_regs(5, 1, 0));
+
+  assert(last_write.bits == UINT32_C(0x3f800000));
+  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::E5M2);
+  assert((last_fp_exceptions & softfloat_flag_inexact) != 0);
+
+  execution_state.FPR_TAGS.write(1, transprecision_type_t::FP64);
+  execution_rounding_mode = softfloat_round_max;
+  execute_fcvt_s_d(insn_with_fp_regs(6, 1, 0));
+
+  assert(last_write.bits == UINT32_C(0x3f800001));
+  assert(execution_state.FPR_TAGS.read(6) == transprecision_type_t::FP32);
+  assert((last_fp_exceptions & softfloat_flag_inexact) != 0);
+}
+
 static void check_masked_value_persists_to_next_instruction()
 {
   reset_execution_context();
-  execution_policy.fp32_to_fp16_protected_bits = 0;
+  execution_policy.fp32_protected_bits = 0;
 
   execution_state.f32_regs[1] = f32(UINT32_C(0x3f900001));
   execution_state.f32_regs[2] = f32(UINT32_C(0x00000000));
@@ -583,25 +689,25 @@ static void check_masked_value_persists_to_next_instruction()
   execute_fsgnj_s(insn_with_fp_regs(5, 1, 2));
 
   assert(last_write.reg == 5);
-  assert(last_write.bits == UINT32_C(0x3f900000));
-  assert(execution_state.f32_regs[5].v == UINT32_C(0x3f900000));
-  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::FP16);
+  assert(last_write.bits == UINT32_C(0x3f800000));
+  assert(execution_state.f32_regs[5].v == UINT32_C(0x3f800000));
+  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::E5M2);
   assert(execution_state.transprecision_counters
-      .result_demotion_masked_from_to[2][1] == 1);
+      .result_tag_reduction_changed_from_to[2][0] == 1);
 
   execution_state.f32_regs[3] = f32(UINT32_C(0x00000000));
   execution_state.FPR_TAGS.write(3, transprecision_type_t::E5M2);
   execute_fadd_s(insn_with_fp_regs(6, 5, 3));
 
   assert(last_write.reg == 6);
-  assert(last_write.bits == UINT32_C(0x3f900000));
-  assert(execution_state.FPR_TAGS.read(6) == transprecision_type_t::FP16);
+  assert(last_write.bits == UINT32_C(0x3f800000));
+  assert(execution_state.FPR_TAGS.read(6) == transprecision_type_t::E5M2);
 }
 
 static void check_fp64_masked_value_persists_to_next_instruction()
 {
   reset_execution_context();
-  execution_policy.fp64_to_fp32_protected_bits = 0;
+  execution_policy.fp64_protected_bits = 0;
 
   execution_state.f64_regs[1] =
       f64(UINT64_C(0x3ff0000020000001));
@@ -612,20 +718,20 @@ static void check_fp64_masked_value_persists_to_next_instruction()
   execute_fsgnj_d(insn_with_fp_regs(5, 1, 2));
 
   assert(last_write.reg == 5);
-  assert(last_write.bits == UINT64_C(0x3ff0000020000000));
+  assert(last_write.bits == UINT64_C(0x3ff0000000000000));
   assert(execution_state.f64_regs[5].v
-      == UINT64_C(0x3ff0000020000000));
-  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::FP32);
+      == UINT64_C(0x3ff0000000000000));
+  assert(execution_state.FPR_TAGS.read(5) == transprecision_type_t::E5M2);
   assert(execution_state.transprecision_counters
-      .result_demotion_masked_from_to[3][2] == 1);
+      .result_tag_reduction_changed_from_to[3][0] == 1);
 
   execution_state.f64_regs[3] = f64(UINT64_C(0x0000000000000000));
   execution_state.FPR_TAGS.write(3, transprecision_type_t::E5M2);
   execute_fadd_d(insn_with_fp_regs(6, 5, 3));
 
   assert(last_write.reg == 6);
-  assert(last_write.bits == UINT64_C(0x3ff0000020000000));
-  assert(execution_state.FPR_TAGS.read(6) == transprecision_type_t::FP32);
+  assert(last_write.bits == UINT64_C(0x3ff0000000000000));
+  assert(execution_state.FPR_TAGS.read(6) == transprecision_type_t::E5M2);
 }
 
 static void check_fp64_load_nan_boxed_fp32_effective_counter()
@@ -694,9 +800,13 @@ int main()
   check_flt_s_observes_binary_effective_type();
   check_flt_s_recovers_before_observation();
   check_fmadd_s_ternary_effective_type();
+  check_fmadd_s_quantized_result_persists();
+  check_fadd_s_effective_overflow_propagates_without_flags();
   check_fadd_d_observable_promotion();
   check_fcvt_d_s_uses_source_effective_type();
   check_fcvt_s_d_uses_source_effective_type();
+  check_fcvt_s_d_limits_result_type_to_fp32();
+  check_fcvt_s_d_rounding_and_fflags_boundaries();
   check_masked_value_persists_to_next_instruction();
   check_fp64_masked_value_persists_to_next_instruction();
   check_fp64_load_nan_boxed_fp32_effective_counter();

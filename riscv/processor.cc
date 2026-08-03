@@ -149,7 +149,6 @@ void state_t::reset(processor_t* const proc, reg_t max_isa)
   FPR_TAGS.reset();
   FPR_FP64_LOAD_BOXING.reset();
   last_transprecision_effective_type = transprecision_type_t::UNCLASSIFIED;
-  transprecision_effective_type_observations = 0;
   transprecision_counters.reset(INSN_COUNT);
 
   prv = prev_prv = PRV_M;

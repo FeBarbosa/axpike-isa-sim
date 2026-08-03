@@ -94,7 +94,6 @@ struct state_t
   transprecision_fp64_load_boxing_file_t<NFPR>
       FPR_FP64_LOAD_BOXING;
   transprecision_type_t last_transprecision_effective_type;
-  uint64_t transprecision_effective_type_observations;
   transprecision_counters_t transprecision_counters;
 
   // control and status registers
