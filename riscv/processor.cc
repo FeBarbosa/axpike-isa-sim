@@ -90,6 +90,11 @@ processor_t::processor_t(const char* isa_str, const char* priv_str,
 
 processor_t::~processor_t()
 {
+  // Stats refers to processor state, which is destroyed before ax_control
+  // because ax_control must be constructed first. Emit the final reports while
+  // that state is still alive instead of from Stats::~Stats().
+  ax_control.stats.finalize();
+
   if (histogram_enabled)
   {
     std::vector<std::pair<reg_t, uint64_t>> ordered_histo(pc_histogram.begin(), pc_histogram.end());

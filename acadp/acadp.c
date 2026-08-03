@@ -592,6 +592,8 @@ void create_iface_file() {
   fprintf(fp, "#endif\n\n");
   fprintf(fp, "#define axpike_newsection() asm volatile (\"li a7,%%0\\nli a0,0x1fe\\necall\" : : \"i\"(AXPIKE_SYSNUM) : \"a0\",\"a7\")\n");
   fprintf(fp, "#define axpike_bnewsection() axpike_newsection()\n\n");
+  fprintf(fp, "#define axpike_setsection(x) asm volatile (\"li a7,%%0\\nli a0,%%1\\necall\" : : \"i\"(AXPIKE_SYSNUM), \"i\"((x&0x3f)|0x80) : \"a0\",\"a7\")\n");
+  fprintf(fp, "#define axpike_bsetsection(x) axpike_setsection(x)\n\n");
 
   fprintf(fp, "#endif // _AXPIKE_IFACE_H_\n");
 

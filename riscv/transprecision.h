@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <vector>
 
 enum class transprecision_type_t : uint8_t
@@ -196,7 +197,7 @@ static inline bool transprecision_type_less_than(
       && static_cast<uint8_t>(lhs) < static_cast<uint8_t>(rhs);
 }
 
-struct transprecision_counters_t
+struct transprecision_counter_values_t
 {
   std::vector<std::array<uint64_t, transprecision_type_bucket_count> >
       effective_type_by_instruction;
@@ -231,7 +232,7 @@ struct transprecision_counters_t
   uint64_t operand_unclassified_total;
   uint64_t fp64_load_nan_boxed_fp32_effective_total;
 
-  transprecision_counters_t()
+  transprecision_counter_values_t()
   {
     reset(0);
   }
@@ -370,6 +371,116 @@ struct transprecision_counters_t
     }
     else if (transprecision_type_less_than(effective_type, result_tag))
       invalid_result_promotion_total++;
+  }
+};
+
+struct transprecision_counters_t : public transprecision_counter_values_t
+{
+  std::map<size_t, transprecision_counter_values_t> section_counters;
+  size_t active_section;
+  size_t instruction_count;
+
+  transprecision_counters_t()
+    : active_section(0), instruction_count(0)
+  {
+    reset(0);
+  }
+
+  void reset(size_t new_instruction_count)
+  {
+    instruction_count = new_instruction_count;
+    transprecision_counter_values_t::reset(instruction_count);
+    section_counters.clear();
+    active_section = 0;
+    ensure_section(active_section);
+  }
+
+  void set_section(size_t section)
+  {
+    active_section = section;
+    ensure_section(active_section);
+  }
+
+  void record_lazy_reclassification(bool used_fallback)
+  {
+    transprecision_counter_values_t::record_lazy_reclassification(
+        used_fallback);
+    active_values().record_lazy_reclassification(used_fallback);
+  }
+
+  void record_fp64_load_nan_boxed_fp32_effective()
+  {
+    transprecision_counter_values_t::
+        record_fp64_load_nan_boxed_fp32_effective();
+    active_values().record_fp64_load_nan_boxed_fp32_effective();
+  }
+
+  void record_effective_type(uint32_t instruction_id,
+      transprecision_type_t effective_type,
+      const transprecision_type_t* operands, size_t operand_count)
+  {
+    transprecision_counter_values_t::record_effective_type(
+        instruction_id, effective_type, operands, operand_count);
+    active_values().record_effective_type(
+        instruction_id, effective_type, operands, operand_count);
+  }
+
+  void record_write_tag(transprecision_type_t tag)
+  {
+    transprecision_counter_values_t::record_write_tag(tag);
+    active_values().record_write_tag(tag);
+  }
+
+  void record_external_write(uint8_t value_class_bucket,
+      transprecision_type_t carrier_type, transprecision_type_t result_tag,
+      bool value_was_masked, bool masked_to_zero)
+  {
+    transprecision_counter_values_t::record_external_write(
+        value_class_bucket, carrier_type, result_tag,
+        value_was_masked, masked_to_zero);
+    active_values().record_external_write(
+        value_class_bucket, carrier_type, result_tag,
+        value_was_masked, masked_to_zero);
+  }
+
+  void record_operation_result(uint8_t value_class_bucket,
+      transprecision_type_t carrier_type,
+      transprecision_type_t effective_type,
+      transprecision_type_t result_tag,
+      bool quantization_performed,
+      bool quantization_changed,
+      bool quantization_to_zero,
+      bool quantization_overflow,
+      bool quantization_underflow,
+      bool reduction_value_was_masked,
+      bool reduction_to_zero)
+  {
+    transprecision_counter_values_t::record_operation_result(
+        value_class_bucket, carrier_type, effective_type, result_tag,
+        quantization_performed, quantization_changed, quantization_to_zero,
+        quantization_overflow, quantization_underflow,
+        reduction_value_was_masked, reduction_to_zero);
+    active_values().record_operation_result(
+        value_class_bucket, carrier_type, effective_type, result_tag,
+        quantization_performed, quantization_changed, quantization_to_zero,
+        quantization_overflow, quantization_underflow,
+        reduction_value_was_masked, reduction_to_zero);
+  }
+
+private:
+  transprecision_counter_values_t& ensure_section(size_t section)
+  {
+    if (section_counters.count(section) == 0) {
+      auto insertion = section_counters.emplace(
+          section, transprecision_counter_values_t());
+      insertion.first->second.reset(instruction_count);
+    }
+    return section_counters.find(section)->second;
+  }
+
+  transprecision_counter_values_t& active_values()
+  {
+    return section_counters.find(active_section)->second;
   }
 };
 

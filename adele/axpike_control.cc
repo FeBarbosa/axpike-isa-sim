@@ -160,6 +160,9 @@ void AxPIKE::Control::issue(uint8_t cmd) {
     this->activateApprox( cmd & 0x3f , 3);
     this->stats.setStats();
   }
+  else if (cmd < 192) {
+    this->stats.setSection(cmd & 0x3f);
+  }
   else if (cmd == 0xff) {
     for (int i=0; i < (INSN_COUNT << 2); i++) {
       IM[i].clear();
@@ -180,8 +183,7 @@ void AxPIKE::Control::issue(uint8_t cmd) {
     this->stats.setStats();
   }
   else if (cmd == 0xfe) {
-    this->stats.section++;
-    this->stats.setStats();
+    this->stats.newSection();
   }
   else if (cmd == 0xfd) {
     this->stats.printCounters();

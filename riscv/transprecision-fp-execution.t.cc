@@ -788,6 +788,54 @@ static void check_fp64_nan_and_overwrite_do_not_confirm_boxing()
       .fp64_load_nan_boxed_fp32_effective_total == 0);
 }
 
+static void check_transprecision_counters_partition_by_section()
+{
+  transprecision_counters_t counters;
+  counters.reset(8);
+  const transprecision_type_t operands[] = {
+      transprecision_type_t::FP16,
+      transprecision_type_t::FP32,
+  };
+
+  counters.set_section(1);
+  counters.record_effective_type(
+      3, transprecision_type_t::FP32, operands, 2);
+  counters.set_section(2);
+  counters.record_effective_type(
+      3, transprecision_type_t::FP32, operands, 2);
+
+  const size_t fp16 = transprecision_type_bucket(
+      transprecision_type_t::FP16);
+  const size_t fp32 = transprecision_type_bucket(
+      transprecision_type_t::FP32);
+  assert(counters.section_counters.size() == 3);
+  assert(counters.effective_type_by_instruction[3][fp32] == 2);
+  assert(counters.section_counters[0]
+      .effective_type_by_instruction[3][fp32] == 0);
+  assert(counters.section_counters[1]
+      .effective_type_by_instruction[3][fp32] == 1);
+  assert(counters.section_counters[2]
+      .effective_type_by_instruction[3][fp32] == 1);
+  assert(counters.operand_promotion_from_to[fp16][fp32] == 2);
+  assert(counters.section_counters[1]
+      .operand_promotion_from_to[fp16][fp32] == 1);
+  assert(counters.section_counters[2]
+      .operand_promotion_from_to[fp16][fp32] == 1);
+
+  for (size_t repetition = 0; repetition < 1000; repetition++) {
+    for (size_t section = 0; section < 8; section++) {
+      counters.set_section(section);
+      counters.record_effective_type(
+          static_cast<uint32_t>(section), transprecision_type_t::FP32,
+          operands, 2);
+    }
+  }
+  for (size_t section = 0; section < 8; section++) {
+    assert(counters.section_counters[section]
+        .effective_type_by_instruction[section][fp32] == 1000);
+  }
+}
+
 int main()
 {
   check_fadd_s_observable_promotion();
@@ -811,6 +859,7 @@ int main()
   check_fp64_masked_value_persists_to_next_instruction();
   check_fp64_load_nan_boxed_fp32_effective_counter();
   check_fp64_nan_and_overwrite_do_not_confirm_boxing();
+  check_transprecision_counters_partition_by_section();
 
   return 0;
 }

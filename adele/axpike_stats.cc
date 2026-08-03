@@ -1,4 +1,5 @@
 #include "axpike_stats.h"
+#include "axpike_stats_sections.h"
 #include <algorithm>
 #include <iostream>
 #include <fstream>
@@ -12,8 +13,13 @@
 std::vector<std::string> AxPIKE::Stats::insns;
 std::unordered_map<uint8_t, std::string> AxPIKE::Stats::approxes;
 
-AxPIKE::Stats::~Stats() {
+AxPIKE::Stats::~Stats() = default;
+
+void AxPIKE::Stats::finalize() {
+  if (finalized)
+    return;
   printCounters();
+  finalized = true;
 }
 
 void AxPIKE::Stats::printCounters() {
@@ -24,6 +30,8 @@ void AxPIKE::Stats::printCounters() {
   printEnergyCounter(fname.c_str());
   fname = "AxPIKE_transprecision_" + std::to_string(::getpid()) + "_hart" + std::to_string(p->get_id()) + "_" + std::to_string(seq++) + ".csv";
   printTransprecisionCounter(fname.c_str());
+  fname = "AxPIKE_transprecision_sections_" + std::to_string(::getpid()) + "_hart" + std::to_string(p->get_id()) + "_" + std::to_string(seq - 1) + ".csv";
+  printTransprecisionSectionCounter(fname.c_str());
   clearCounters();
 }
 
@@ -43,7 +51,7 @@ void AxPIKE::Stats::printInstrCounter(const char* fname) {
 
   if (fp.is_open()) {
     fp << "\"Instruction/Approximation\",\"No approximation\"";
-    for (int i = 1; i <= section; i++) {
+    for (int i = 1; i <= max_section; i++) {
       fp << ",";
     }
     for (auto& x : icounter_map) {
@@ -57,7 +65,7 @@ void AxPIKE::Stats::printInstrCounter(const char* fname) {
         }
         as.erase(0, 3);
         fp << ", \"" << as << "\"";
-        for (int i = 1; i <= section; i++) {
+        for (int i = 1; i <= max_section; i++) {
           fp << ", ";
         }
       }
@@ -65,7 +73,7 @@ void AxPIKE::Stats::printInstrCounter(const char* fname) {
     fp << std::endl;
 
     for (auto& y : icounter_map) {
-      for (int i = 0; i <= section; i++) {
+      for (int i = 0; i <= max_section; i++) {
         fp << ",\"Section " << i << "\"";
       }
     }
@@ -73,20 +81,22 @@ void AxPIKE::Stats::printInstrCounter(const char* fname) {
 
     fp << "\"-All instructions-\"";
     uint64_t sum = 0;
-    for (int i = 0; i <= section; i++) {
+    for (int i = 0; i <= max_section; i++) {
       sum = 0;
       for (uint64_t instr = 0; instr < INSN_COUNT<<2; instr++) {
-        sum += icounter_map[0x0][i][instr];
+        sum += detail::sectionCounterValue(icounter_map, 0x0, i, instr);
       }
       fp << ", " << sum;
     }
     for (auto& y : icounter_map) {
       if (y.first != 0x0) {
-        for (int i = 0; i <= section; i++) {
+        for (int i = 0; i <= max_section; i++) {
           sum = 0;
-          if (icounter_map[y.first].count(i)) {
+          const uint64_t* section_counters =
+              detail::findSectionCounters(icounter_map, y.first, i);
+          if (section_counters != nullptr) {
             for (uint64_t instr = 0; instr < INSN_COUNT<<2; instr++) {
-              sum += icounter_map[y.first][i][instr];
+              sum += section_counters[instr];
             }
           }
           fp << ", " << sum;
@@ -97,20 +107,22 @@ void AxPIKE::Stats::printInstrCounter(const char* fname) {
 
     for (int prv = 0; prv < 4; prv++) {
       fp << "\"-All|" << prvs[prv] << "-\"";
-      for (int i = 0; i <= section; i++) {
+      for (int i = 0; i <= max_section; i++) {
         sum = 0;
         for (uint64_t instr = prv; instr < INSN_COUNT<<2; instr+=4) {
-          sum += icounter_map[0x0][i][instr];
+          sum += detail::sectionCounterValue(icounter_map, 0x0, i, instr);
         }
         fp << ", " << sum;
       }
       for (auto& y : icounter_map) {
         if (y.first != 0x0) {
-          for (int i = 0; i <= section; i++) {
+          for (int i = 0; i <= max_section; i++) {
             sum = 0;
-            if (icounter_map[y.first].count(i)) {
+            const uint64_t* section_counters =
+                detail::findSectionCounters(icounter_map, y.first, i);
+            if (section_counters != nullptr) {
               for (uint64_t instr = prv; instr < INSN_COUNT<<2; instr+=4) {
-                sum += icounter_map[y.first][i][instr];
+                sum += section_counters[instr];
               }
             }
             fp << ", " << sum;
@@ -122,14 +134,17 @@ void AxPIKE::Stats::printInstrCounter(const char* fname) {
 
     for (uint64_t instr = 0; instr < INSN_COUNT<<2; instr++) {
       fp <<"\"" << AxPIKE::Stats::insns[instr>>2] << "|" << prvs[instr&0x3] << "\"";
-      for (int i = 0; i <= section; i++) {
-        fp << ", " << icounter_map[0x0][i][instr];
+      for (int i = 0; i <= max_section; i++) {
+        fp << ", "
+           << detail::sectionCounterValue(icounter_map, 0x0, i, instr);
       }
       for (auto& y : icounter_map) {
         if (y.first != 0x0) {
-          for (int i = 0; i <= section; i++) {
-            if (icounter_map[y.first].count(i)) {
-              fp << ", " << icounter_map[y.first][i][instr];
+          for (int i = 0; i <= max_section; i++) {
+            const uint64_t* section_counters =
+                detail::findSectionCounters(icounter_map, y.first, i);
+            if (section_counters != nullptr) {
+              fp << ", " << section_counters[instr];
             }
             else {
               fp << ", 0";
@@ -157,7 +172,7 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
 
   if (fp.is_open()) {
     fp << "\"Instruction/Approximation\",\"No approximation\"";
-    for (int i = 1; i <= section; i++) {
+    for (int i = 1; i <= max_section; i++) {
       fp << ",";
     }
     for (auto& x : ecounter_map) {
@@ -171,7 +186,7 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
         }
         as.erase(0, 3);
         fp << ", \"" << as << "\"";
-        for (int i = 1; i <= section; i++) {
+        for (int i = 1; i <= max_section; i++) {
           fp << ", ";
         }
       }
@@ -179,7 +194,7 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
     fp << std::endl;
 
     for (auto& y : ecounter_map) {
-      for (int i = 0; i <= section; i++) {
+      for (int i = 0; i <= max_section; i++) {
         fp << ",\"Section " << i << "\"";
       }
     }
@@ -187,20 +202,22 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
 
     fp << "\"-All instructions-\"";
     double sum = 0;
-    for (int i = 0; i <= section; i++) {
+    for (int i = 0; i <= max_section; i++) {
       sum = 0;
       for (uint64_t instr = 0; instr < INSN_COUNT<<2; instr++) {
-        sum += ecounter_map[0x0][i][instr];
+        sum += detail::sectionCounterValue(ecounter_map, 0x0, i, instr);
       }
       fp << ", " << sum;
     }
     for (auto& y : ecounter_map) {
       if (y.first != 0x0) {
-        for (int i = 0; i <= section; i++) {
+        for (int i = 0; i <= max_section; i++) {
           sum = 0;
-          if (icounter_map[y.first].count(i)) {
+          const double* section_counters =
+              detail::findSectionCounters(ecounter_map, y.first, i);
+          if (section_counters != nullptr) {
             for (uint64_t instr = 0; instr < INSN_COUNT<<2; instr++) {
-              sum += ecounter_map[y.first][i][instr];
+              sum += section_counters[instr];
             }
           }
           fp << ", " << sum;
@@ -211,20 +228,22 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
 
     for (int prv = 0; prv < 4; prv++) {
       fp << "\"-All|" << prvs[prv] << "-\"";
-      for (int i = 0; i <= section; i++) {
+      for (int i = 0; i <= max_section; i++) {
         sum = 0;
         for (uint64_t instr = prv; instr < INSN_COUNT<<2; instr+=4) {
-          sum += ecounter_map[0x0][i][instr];
+          sum += detail::sectionCounterValue(ecounter_map, 0x0, i, instr);
         }
         fp << ", " << sum;
       }
       for (auto& y : ecounter_map) {
         if (y.first != 0x0) {
-          for (int i = 0; i <= section; i++) {
+          for (int i = 0; i <= max_section; i++) {
             sum = 0;
-            if (icounter_map[y.first].count(i)) {
+            const double* section_counters =
+                detail::findSectionCounters(ecounter_map, y.first, i);
+            if (section_counters != nullptr) {
               for (uint64_t instr = prv; instr < INSN_COUNT<<2; instr+=4) {
-                sum += ecounter_map[y.first][i][instr];
+                sum += section_counters[instr];
               }
             }
             fp << ", " << sum;
@@ -236,14 +255,17 @@ void AxPIKE::Stats::printEnergyCounter(const char* fname) {
 
     for (uint64_t instr = 0; instr < INSN_COUNT<<2; instr++) {
       fp <<"\"" << AxPIKE::Stats::insns[instr>>2] << "|" << prvs[instr&0x3] << "\"";
-      for (int i = 0; i <= section; i++) {
-        fp << ", " << ecounter_map[0x0][i][instr];
+      for (int i = 0; i <= max_section; i++) {
+        fp << ", "
+           << detail::sectionCounterValue(ecounter_map, 0x0, i, instr);
       }
       for (auto& y : ecounter_map) {
         if (y.first != 0x0) {
-          for (int i = 0; i <= section; i++) {
-            if (icounter_map[y.first].count(i)) {
-              fp << ", " << ecounter_map[y.first][i][instr];
+          for (int i = 0; i <= max_section; i++) {
+            const double* section_counters =
+                detail::findSectionCounters(ecounter_map, y.first, i);
+            if (section_counters != nullptr) {
+              fp << ", " << section_counters[instr];
             }
             else {
               fp << ", 0.0";
@@ -434,6 +456,123 @@ void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
   }
 }
 
+static void writeTransprecisionSectionRows(std::ostream& fp,
+    size_t section, const transprecision_counter_values_t& counters)
+{
+  const auto row = [&fp, section](const char* category,
+      const std::string& instruction, const char* from, const char* to,
+      const char* type, const char* value_class, uint64_t value) {
+    fp << section << ",\"" << category << "\",\"" << instruction
+       << "\",\"" << from << "\",\"" << to << "\",\"" << type
+       << "\",\"" << value_class << "\"," << value << std::endl;
+  };
+
+  row("operand_unclassified_total", "", "", "", "", "",
+      counters.operand_unclassified_total);
+  row("result_tag_reduction_to_zero_total", "", "", "", "", "",
+      counters.result_tag_reduction_to_zero_total);
+  row("external_write_masked_to_zero_total", "", "", "", "", "",
+      counters.external_write_masked_to_zero_total);
+  row("invalid_result_promotion_total", "", "", "", "", "",
+      counters.invalid_result_promotion_total);
+  row("lazy_reclassification_total", "", "", "", "", "",
+      counters.lazy_reclassification_total);
+  row("unclassified_fallback_total", "", "", "", "", "",
+      counters.unclassified_fallback_total);
+  row("fp64_load_nan_boxed_fp32_effective_total", "", "", "", "", "",
+      counters.fp64_load_nan_boxed_fp32_effective_total);
+
+  for (size_t type = 0; type < transprecision_type_bucket_count; type++) {
+    row("write_tag_total", "", "", "",
+        transprecision_type_bucket_name(type), "",
+        counters.write_tag_total[type]);
+  }
+  for (size_t value_class = 0;
+       value_class < transprecision_value_class_bucket_count; value_class++) {
+    row("operation_result_class_total", "", "", "", "",
+        transprecision_value_class_name(value_class),
+        counters.operation_result_class_total[value_class]);
+    row("external_write_class_total", "", "", "", "",
+        transprecision_value_class_name(value_class),
+        counters.external_write_class_total[value_class]);
+  }
+
+  const size_t supported_type_count = transprecision_type_bucket_count - 1;
+  const size_t fp32_bucket =
+      transprecision_type_bucket(transprecision_type_t::FP32);
+  const size_t fp64_bucket =
+      transprecision_type_bucket(transprecision_type_t::FP64);
+  for (size_t carrier : {fp32_bucket, fp64_bucket}) {
+    for (size_t effective = 0; effective < carrier; effective++) {
+      const char* from = transprecision_type_bucket_name(carrier);
+      const char* to = transprecision_type_bucket_name(effective);
+      row("result_quantization_total_from_to", "", from, to, "", "",
+          counters.result_quantization_total_from_to[carrier][effective]);
+      row("result_quantization_changed_from_to", "", from, to, "", "",
+          counters.result_quantization_changed_from_to[carrier][effective]);
+      row("result_quantization_to_zero_from_to", "", from, to, "", "",
+          counters.result_quantization_to_zero_from_to[carrier][effective]);
+      row("result_quantization_overflow_from_to", "", from, to, "", "",
+          counters.result_quantization_overflow_from_to[carrier][effective]);
+      row("result_quantization_underflow_from_to", "", from, to, "", "",
+          counters.result_quantization_underflow_from_to[carrier][effective]);
+    }
+  }
+
+  for (size_t from = 0; from < supported_type_count; from++) {
+    for (size_t to = 0; to < supported_type_count; to++) {
+      const char* from_name = transprecision_type_bucket_name(from);
+      const char* to_name = transprecision_type_bucket_name(to);
+      if (from < to) {
+        row("operand_promotion_from_to", "", from_name, to_name, "", "",
+            counters.operand_promotion_from_to[from][to]);
+      }
+      else if (from > to) {
+        row("result_tag_reduction_total_from_to", "", from_name, to_name,
+            "", "", counters.result_tag_reduction_total_from_to[from][to]);
+        row("result_tag_reduction_changed_from_to", "", from_name, to_name,
+            "", "", counters.result_tag_reduction_changed_from_to[from][to]);
+        if (from == fp32_bucket || from == fp64_bucket) {
+          row("external_write_masked_from_to", "", from_name, to_name,
+              "", "", counters.external_write_masked_from_to[from][to]);
+        }
+      }
+    }
+  }
+
+  const size_t instruction_count =
+      std::min(counters.effective_type_by_instruction.size(),
+               AxPIKE::Stats::insns.size());
+  for (size_t instr = 0; instr < instruction_count; instr++) {
+    for (size_t type = 0; type < transprecision_type_bucket_count; type++) {
+      const uint64_t count = counters.effective_type_by_instruction[instr][type];
+      if (count != 0) {
+        row("effective_type_by_instruction", AxPIKE::Stats::insns[instr],
+            "", "", transprecision_type_bucket_name(type), "", count);
+      }
+    }
+  }
+}
+
+void AxPIKE::Stats::printTransprecisionSectionCounter(const char* fname) {
+  std::ofstream fp(fname, std::ios::out | std::ios::trunc);
+  std::cerr << "Writing AxPIKE transprecision section counters to " << fname
+            << std::endl;
+  if (!fp.is_open()) {
+    std::cerr << "AxPIKE Error: Unable to open file \"" << fname
+              << "\" to save transprecision section counters." << std::endl;
+    return;
+  }
+
+  fp << "\"Section\",\"Category\",\"Instruction\",\"From\",\"To\","
+        "\"Type\",\"Class\",\"Value\"" << std::endl;
+  const auto& sections = p->state.transprecision_counters.section_counters;
+  for (const auto& section_entry : sections) {
+    writeTransprecisionSectionRows(
+        fp, section_entry.first, section_entry.second);
+  }
+}
+
 void AxPIKE::Stats::insnDispatch(double energy) {
   instrs_counter++;
 
@@ -456,4 +595,15 @@ void AxPIKE::Stats::setStats() {
     icounter_map[active_approx[prv]][section] = icounter;
     ecounter_map[active_approx[prv]][section] = ecounter;
   }
+}
+
+void AxPIKE::Stats::setSection(uint8_t new_section) {
+  section = new_section;
+  max_section = std::max(max_section, section);
+  setStats();
+  p->state.transprecision_counters.set_section(section);
+}
+
+void AxPIKE::Stats::newSection() {
+  setSection(static_cast<uint8_t>(section + 1));
 }

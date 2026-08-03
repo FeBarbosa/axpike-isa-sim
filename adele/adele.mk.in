@@ -9,6 +9,7 @@ adele_CFLAGS = -fPIC
 adele_hdrs = \
 	axpike_control.h \
 	axpike_stats.h \
+	axpike_stats_sections.h \
 	axpike_storage.h \
 	axpike_htif.h \
 	axpike_log.h \
@@ -24,6 +25,7 @@ adele_srcs = \
 	$(adele_gen_srcs) \
 
 adele_test_srcs = \
+	axpike_stats_sections.t.cc \
 
 adele_gen_hdrs = \
 	axpike_wrappers.h \
