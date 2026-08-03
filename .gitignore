@@ -19,7 +19,9 @@ verification/out/fp16_*
 verification/out/fp64_*
 verification/out/lenet-reduced-validation-*/
 verification/out/mnist-prefix*/
+verification/out/mnist-full-*/
 verification/out/lenet-uniform-n-reduced-matrix-*/
+verification/out/lenet-uniform-n-full-matrix-*/
 verification/out/lenet-softmax-*/
 verification/out/lenet-uniform-n-softmax-*/
 verification/out/transprecision-uniform-matrix-*.json

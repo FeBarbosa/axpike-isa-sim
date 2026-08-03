@@ -237,6 +237,13 @@ class UniformNReducedMatrixTest(unittest.TestCase):
                 )
                 self.assertEqual(len(entries), 1)
                 self.assertEqual(execute.call_count, 1)
+                completion = json.loads(
+                    (output / "runs/n-00/completion.json").read_text()
+                )
+                self.assertIn("started_at", completion["execution"])
+                self.assertGreaterEqual(
+                    completion["execution"]["elapsed_seconds"], 0
+                )
 
                 resumed = matrix_runner.run_pending_configurations(
                     output_directory=output,

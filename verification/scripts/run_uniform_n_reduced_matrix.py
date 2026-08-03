@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -135,6 +141,76 @@ def artifact_identity(path: Path) -> dict[str, Any]:
     }
 
 
+def tool_identity(command: str) -> dict[str, Any]:
+    executable = shutil.which(command)
+    if executable is None:
+        raise ValueError(f"required build tool is not available: {command}")
+    completed = subprocess.run(
+        [executable, "--version"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return {
+        "command": command,
+        "path": str(Path(executable).resolve()),
+        "version_first_line": completed.stdout.splitlines()[0],
+    }
+
+
+def execution_environment(
+    *,
+    axpike: Path,
+    application: Path,
+) -> dict[str, Any]:
+    host = platform.uname()
+    build_configuration_paths = {
+        "axpike": axpike.resolve().parent / "config.status",
+        "application": application.resolve().parent.parent.parent / "Makefile",
+    }
+    for path in build_configuration_paths.values():
+        endpoint_runner.require_file(path, "build configuration")
+    file_tool = shutil.which("file")
+    if file_tool is None:
+        raise ValueError("required provenance tool is not available: file")
+
+    def file_description(path: Path) -> str:
+        return subprocess.run(
+            [file_tool, "--brief", str(path.resolve())],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+
+    return {
+        "host": {
+            "system": host.system,
+            "node": host.node,
+            "release": host.release,
+            "version": host.version,
+            "machine": host.machine,
+        },
+        "python": {
+            "executable": str(Path(sys.executable).resolve()),
+            "version": platform.python_version(),
+        },
+        "compilers": {
+            "axpike_cxx": tool_identity("g++"),
+            "application_cxx": tool_identity("riscv64-unknown-elf-g++"),
+        },
+        "build_configuration": {
+            name: artifact_identity(path)
+            for name, path in build_configuration_paths.items()
+        },
+        "executable_formats": {
+            "axpike": file_description(axpike),
+            "application": file_description(application),
+        },
+    }
+
+
 def build_campaign(
     *,
     matrix_path: Path,
@@ -144,23 +220,28 @@ def build_campaign(
     application: Path,
     data_directory: Path,
     proxy_kernel: str,
+    image_count: int = endpoint_runner.IMAGE_COUNT,
+    purpose: str = PURPOSE,
+    scope: str = "implementation and simulator-model validation only",
+    automation_paths: tuple[Path, ...] | None = None,
 ) -> dict[str, Any]:
     repository_root = Path(__file__).resolve().parents[2]
     fixture_manifest_path = data_directory / "fixture-manifest.json"
-    automation_paths = (
-        Path(__file__).resolve(),
-        repository_root
-        / "verification/scripts/run_reduced_lenet_validation.py",
-        repository_root
-        / "verification/scripts/summarize_reduced_lenet_validation.py",
-        repository_root
-        / "verification/scripts/generate_transprecision_experiment_matrix.py",
-    )
+    if automation_paths is None:
+        automation_paths = (
+            Path(__file__).resolve(),
+            repository_root
+            / "verification/scripts/run_reduced_lenet_validation.py",
+            repository_root
+            / "verification/scripts/summarize_reduced_lenet_validation.py",
+            repository_root
+            / "verification/scripts/generate_transprecision_experiment_matrix.py",
+        )
     return {
         "schema_version": CAMPAIGN_SCHEMA_VERSION,
-        "purpose": PURPOSE,
-        "scope": "implementation and simulator-model validation only",
-        "image_count": endpoint_runner.IMAGE_COUNT,
+        "purpose": purpose,
+        "scope": scope,
+        "image_count": image_count,
         "mode": endpoint_runner.EXPERIMENT_MODE,
         "type_order": list(endpoint_runner.TYPE_ORDER),
         "matrix": {
@@ -204,6 +285,10 @@ def build_campaign(
             path.name: artifact_identity(path)
             for path in automation_paths
         },
+        "execution_environment": execution_environment(
+            axpike=axpike,
+            application=application,
+        ),
         "configurations": [
             {
                 "n": configuration["n"],
@@ -352,6 +437,7 @@ def run_pending_configurations(
     application: Path,
     data_directory: Path,
     max_new_runs: int | None,
+    image_count: int = endpoint_runner.IMAGE_COUNT,
 ) -> list[dict[str, Any]]:
     completed_entries: dict[str, dict[str, Any]] = {}
     for configuration in configurations:
@@ -394,6 +480,8 @@ def run_pending_configurations(
             protected_bits=vector,
             n=configuration["n"],
         )
+        started_at = datetime.now(timezone.utc).isoformat()
+        started_monotonic = time.monotonic()
         try:
             local_entry = endpoint_runner.run_configuration(
                 configuration=runtime_configuration,
@@ -402,7 +490,7 @@ def run_pending_configurations(
                 application=application,
                 data_directory=data_directory,
                 output_directory=attempt_directory,
-                image_count=endpoint_runner.IMAGE_COUNT,
+                image_count=image_count,
             )
             record_path = attempt_directory / local_entry["record"]
             run_entry = {
@@ -419,6 +507,10 @@ def run_pending_configurations(
             ):
                 raise ValueError("gated run does not match matrix configuration")
 
+            execution = {
+                "started_at": started_at,
+                "elapsed_seconds": time.monotonic() - started_monotonic,
+            }
             gate = {
                 "schema_version": 1,
                 "status": "passed",
@@ -429,6 +521,7 @@ def run_pending_configurations(
                     "protected_bits": configuration["protected_bits"],
                 },
                 "run": run_entry,
+                "execution": execution,
                 "invariants": PASSED_INVARIANTS,
             }
             gate_path = attempt_directory / "gate.json"
@@ -439,6 +532,7 @@ def run_pending_configurations(
                 "campaign_sha256": campaign_sha256,
                 "configuration": gate["configuration"],
                 "run": run_entry,
+                "execution": execution,
                 "gate": {
                     "path": str(gate_path.relative_to(output_directory)),
                     "sha256": endpoint_runner.sha256(gate_path),
@@ -470,6 +564,8 @@ def run_pending_configurations(
                 "attempt": str(attempt_directory.relative_to(output_directory)),
                 "error_type": type(error).__name__,
                 "message": str(error),
+                "started_at": started_at,
+                "elapsed_seconds": time.monotonic() - started_monotonic,
             }
             write_json_atomic(attempt_directory / "failure.json", failure)
             write_json_atomic(
@@ -517,7 +613,7 @@ def finalize_campaign(
         return
     run_manifest = {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
-        "purpose": PURPOSE,
+        "purpose": campaign["purpose"],
         "scope": campaign["scope"],
         "image_count": campaign["image_count"],
         "mode": campaign["mode"],

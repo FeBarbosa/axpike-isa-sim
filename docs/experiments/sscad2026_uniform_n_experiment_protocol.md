@@ -75,6 +75,11 @@ curve, record and compare:
 - instruction-approximation activation and coverage; and
 - hashes and schema of the preserved outputs.
 
+The campaign manifest freezes host and kernel identity, Python runtime, host
+and RISC-V compiler paths and version lines, and hashes of the build
+configuration files. Compiler records describe how the binaries were built;
+the executable hashes identify the exact binaries that were evaluated.
+
 If an exact prior artifact cannot be authenticated, rebuild and rerun the
 historical revision. If a controlled input or application artifact differs from
 the dynamic campaign, do not use the control for a direct numerical difference
@@ -227,6 +232,20 @@ images. A full run is invalid if it fails the reduced invariants, processes a
 count other than 10,000, or cannot be linked to the frozen matrix and artifact
 hashes.
 
+The complete campaign must use a dedicated full-fixture manifest that checks
+the standard MNIST IDX headers, exact sizes, and hashes of the training and
+test image/label files. Its campaign identity must also reference the passed
+reduced matrix gate and reject a mismatch in matrix hash, AxPIKE, ADF or
+application revision, executable hash, or proxy-kernel argument. The reduced
+fixture and complete fixture are intentionally different inputs; that
+difference is recorded rather than treated as an identity mismatch.
+
+Initialize the complete campaign with only `n=0` by using the resumable
+runner's one-new-run limit. This point is part of the final campaign, not a
+separate warm-up. Record its elapsed time and artifact size, estimate the
+remaining 50 points on the actual host, and confirm adequate execution time
+and storage before resuming the same campaign directory.
+
 ## Replay and Anomaly Policy
 
 Replay at least `n=0`, `n=8`, `n=21`, and `n=50` using independent output
@@ -283,6 +302,8 @@ output directory is not evidence of completion.
 - Pass generator tests and focused simulator tests.
 - Implement or adapt resumable runners and extractors for all 51 points.
 - Pass the complete 62-image reduced matrix and required replays.
+- Prepare and hash-validate the complete 10,000-image MNIST fixture.
+- Run the complete-campaign `n=0` pilot and record time and storage estimates.
 - Recover and audit the original FP32/FP64 reference artifacts.
 - Estimate storage and elapsed time on the actual execution host.
 - Start the 10,000-image campaign only after recording all identities and

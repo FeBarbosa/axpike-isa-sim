@@ -496,9 +496,10 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
     supported_purposes = {
         "reduced deterministic LeNet validation",
         "uniform-n reduced deterministic LeNet validation",
+        "uniform-n complete MNIST LeNet scientific evaluation",
     }
     if purpose not in supported_purposes:
-        raise ValueError("manifest is not a reduced LeNet validation manifest")
+        raise ValueError("manifest is not a supported LeNet matrix manifest")
     if tuple(manifest.get("type_order", ())) != TYPE_ORDER:
         raise ValueError("unexpected protected-bit type order")
     runs = [
@@ -515,9 +516,9 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
             )
     else:
         if schema_version != 4:
-            raise ValueError("uniform-n reduced matrix requires manifest schema 4")
+            raise ValueError("uniform-n matrix requires manifest schema 4")
         if len(runs) != 51 or [run["n"] for run in runs] != list(range(51)):
-            raise ValueError("uniform-n reduced matrix must contain n=0..50")
+            raise ValueError("uniform-n matrix must contain n=0..50")
         limits = (50, 21, 8, 0)
         for run in runs:
             expected = {

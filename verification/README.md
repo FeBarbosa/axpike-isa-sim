@@ -72,8 +72,10 @@ Runner scripts for larger validation stages:
 - `run_fp16_exhaustive_compare.py`
 - `generate_transprecision_experiment_matrix.py`
 - `prepare_reduced_mnist_fixture.py`
+- `prepare_full_mnist_fixture.py`
 - `run_reduced_lenet_validation.py`
 - `run_uniform_n_reduced_matrix.py`
+- `run_uniform_n_full_matrix.py`
 - `summarize_reduced_lenet_validation.py`
 - `plot_reduced_lenet_validation.py`
 
@@ -270,6 +272,12 @@ emits `run-manifest.json`, `summary/`, and `matrix-gate.json`; the full
 10,000-image evaluation must not start unless the matrix gate reports all 51
 configurations as passed.
 
+The campaign identity also freezes the host/kernel identity, Python runtime,
+host and RISC-V compiler paths and version lines, and hashes of AxPIKE's
+generated `config.status` and the application's Makefile. These records
+document the build and execution environment; executable hashes remain the
+authoritative identities of the binaries actually run.
+
 The campaign identity uses schema 2 and evaluates AxPIKE's dirty-worktree flag
 over the executable provenance scope. The independently versioned
 `paper-sscad2026` article tree is explicitly excluded because it cannot affect
@@ -279,6 +287,35 @@ the article worktree's observed commit, dirty flag, and status entries. That
 separate snapshot remains part of the immutable campaign record. A change to
 simulator code, automation, build inputs, ADF, or application sources still
 makes the corresponding executable provenance dirty.
+
+After the complete reduced matrix and prescribed replays pass, prepare the
+full fixture and initialize the scientific campaign with one resumable pilot:
+
+```bash
+python3 verification/scripts/prepare_full_mnist_fixture.py \
+  --source-directory lenet-riscv-cpp-inference/data \
+  --output-directory verification/out/mnist-full-v1
+
+python3 verification/scripts/run_uniform_n_full_matrix.py \
+  --matrix verification/out/transprecision-uniform-matrix-v1.json \
+  --axpike build/axpike \
+  --application lenet-riscv-cpp-inference/build/bin/app \
+  --data-directory verification/out/mnist-full-v1 \
+  --reduced-gate \
+    verification/out/lenet-uniform-n-reduced-matrix-v1/matrix-gate.json \
+  --output-directory verification/out/lenet-uniform-n-full-matrix-v1 \
+  --max-new-runs 1
+```
+
+The full fixture manifest validates the standard IDX headers, exact file
+sizes, and hashes of all four MNIST files. The full runner refuses a reduced
+gate unless all 51 configurations and invariants passed and the matrix,
+AxPIKE/ADF/application revisions, executable hashes, and proxy-kernel argument
+match. The pilot is the actual `n=0` scientific run. Use its elapsed time and
+artifact size to estimate the remaining campaign before resuming without
+`--max-new-runs`. A complete run uses the same extraction and regional/global
+counter invariants as the reduced gate but has the distinct purpose
+`uniform-n complete MNIST LeNet scientific evaluation`.
 
 ## Hook-Only FP16 Lowprecision Test
 
