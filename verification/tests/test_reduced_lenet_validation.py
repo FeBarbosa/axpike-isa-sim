@@ -342,8 +342,30 @@ class ReducedLenetValidationTest(unittest.TestCase):
             run_directory.mkdir()
             csv_path = run_directory / "AxPIKE_transprecision_test.csv"
             self.write_transprecision_csv(csv_path, bits)
+            with csv_path.open(newline="", encoding="utf-8") as source:
+                global_rows = [
+                    row for row in csv.DictReader(source)
+                    if not row["Category"].startswith("policy_")
+                ]
+            regional_path = (
+                run_directory / "AxPIKE_transprecision_sections_test.csv"
+            )
+            with regional_path.open("w", newline="", encoding="utf-8") as output:
+                fieldnames = [
+                    "Section", "Category", "Instruction", "From", "To",
+                    "Type", "Class", "Value",
+                ]
+                writer = csv.DictWriter(output, fieldnames=fieldnames)
+                writer.writeheader()
+                for section in summarizer.REGION_NAMES:
+                    for row in global_rows:
+                        writer.writerow(
+                            {"Section": section, **row}
+                            if section == 0
+                            else {"Section": section, **row, "Value": 0}
+                        )
             record = {
-                "schema_version": 3,
+                "schema_version": 4,
                 "id": identifier,
                 "label": label,
                 "image_count": 62,
@@ -359,7 +381,11 @@ class ReducedLenetValidationTest(unittest.TestCase):
                     "transprecision": {
                         "path": csv_path.name,
                         "sha256": sha256(csv_path),
-                    }
+                    },
+                    "transprecision_sections": {
+                        "path": regional_path.name,
+                        "sha256": sha256(regional_path),
+                    },
                 },
             }
             record_path = run_directory / "run.json"
@@ -402,6 +428,25 @@ class ReducedLenetValidationTest(unittest.TestCase):
             "--transprecision-type-protected-bits="
             "fp64:0,fp32:0,fp16:0,e5m2:0",
         )
+        self.assertNotIn("prediction:", "processed: 62\ncorrect: 61\nerrors: 1\n")
+
+    def test_regional_csv_requires_expected_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "sections.csv"
+            path.write_text(
+                "Section,Category,Instruction,From,To,Type,Class,Value\n"
+                "0,operation_result_class_total,,,,,FINITE,2\n",
+                encoding="utf-8",
+            )
+            rows = summarizer.parse_transprecision_sections_csv(path)
+            self.assertEqual(rows[0]["Section"], 0)
+            self.assertEqual(rows[0]["Value"], 2)
+            path.write_text(
+                "Category,Value\noperation_result_class_total,2\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "unexpected"):
+                summarizer.parse_transprecision_sections_csv(path)
 
     def test_summary_extracts_metrics_and_passes_invariants(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -430,6 +475,17 @@ class ReducedLenetValidationTest(unittest.TestCase):
             self.assertTrue(
                 all(value == "passed" for value in summary["invariants"].values())
             )
+            regions_path = root / "regions.csv"
+            instructions_path = root / "regional-instructions.csv"
+            summarizer.write_regions_csv(summary, regions_path)
+            summarizer.write_regional_instruction_csv(
+                summary, instructions_path
+            )
+            with regions_path.open(newline="", encoding="utf-8") as source:
+                region_rows = list(csv.DictReader(source))
+            self.assertEqual(len(region_rows), 16)
+            self.assertEqual(region_rows[0]["region_name"], "unscoped")
+            self.assertIn("fadd_s", instructions_path.read_text())
 
     def test_summary_rejects_effective_boxed_count_above_carriers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

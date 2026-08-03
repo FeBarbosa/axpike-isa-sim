@@ -32,6 +32,8 @@ PASSED_INVARIANTS = {
     "quantization_range_event_invariants": "passed",
     "changed_tag_reductions_not_above_total": "passed",
     "effective_boxed_fp32_not_above_external_nan": "passed",
+    "global_transprecision_equals_sum_of_regions": "passed",
+    "expected_network_regions_present": "passed",
 }
 
 
@@ -159,7 +161,7 @@ def build_campaign(
         "purpose": PURPOSE,
         "scope": "implementation and simulator-model validation only",
         "image_count": endpoint_runner.IMAGE_COUNT,
-        "mode": "direct-logits",
+        "mode": endpoint_runner.EXPERIMENT_MODE,
         "type_order": list(endpoint_runner.TYPE_ORDER),
         "matrix": {
             **artifact_identity(matrix_path),
@@ -531,8 +533,16 @@ def finalize_campaign(
     summary_directory.mkdir(exist_ok=True)
     summary_path = summary_directory / "summary.json"
     summary_csv_path = summary_directory / "summary.csv"
+    regions_csv_path = summary_directory / "regions.csv"
+    regional_instructions_path = (
+        summary_directory / "effective-types-by-region-instruction.csv"
+    )
     write_json_atomic(summary_path, summary)
     summarizer.write_flat_csv(summary, summary_csv_path)
+    summarizer.write_regions_csv(summary, regions_csv_path)
+    summarizer.write_regional_instruction_csv(
+        summary, regional_instructions_path
+    )
     write_json_atomic(
         summary_directory / "summary-manifest.json",
         {
@@ -541,6 +551,9 @@ def finalize_campaign(
             "artifacts": {
                 "summary.json": endpoint_runner.sha256(summary_path),
                 "summary.csv": endpoint_runner.sha256(summary_csv_path),
+                "regions.csv": endpoint_runner.sha256(regions_csv_path),
+                "effective-types-by-region-instruction.csv":
+                    endpoint_runner.sha256(regional_instructions_path),
             },
         },
     )

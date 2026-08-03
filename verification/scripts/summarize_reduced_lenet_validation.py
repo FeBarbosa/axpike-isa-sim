@@ -22,6 +22,16 @@ QUANTIZATION_PAIRS = (
     ("FP64", "FP16"),
     ("FP64", "FP32"),
 )
+REGION_NAMES = {
+    0: "unscoped",
+    1: "input-normalization",
+    2: "conv1-block",
+    3: "conv2-block",
+    4: "fc1",
+    5: "fc2",
+    6: "softmax",
+    7: "argmax",
+}
 
 
 def sha256(path: Path) -> str:
@@ -37,6 +47,13 @@ def write_json(path: Path, value: Any) -> None:
         json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
         encoding="utf-8",
     )
+
+
+def normalize_csv_value(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if len(normalized) >= 2 and normalized[0] == normalized[-1] == '"':
+        normalized = normalized[1:-1]
+    return normalized
 
 
 def parse_transprecision_csv(path: Path) -> list[dict[str, str | int]]:
@@ -56,7 +73,7 @@ def parse_transprecision_csv(path: Path) -> list[dict[str, str | int]]:
             raise ValueError(f"unexpected transprecision CSV header in {path}")
         for source_row in reader:
             row = {
-                key: (value or "").strip()
+                key: normalize_csv_value(value)
                 for key, value in source_row.items()
             }
             try:
@@ -66,6 +83,63 @@ def parse_transprecision_csv(path: Path) -> list[dict[str, str | int]]:
                     from error
             rows.append(row)
     return rows
+
+
+def parse_transprecision_sections_csv(
+    path: Path,
+) -> list[dict[str, str | int]]:
+    rows: list[dict[str, str | int]] = []
+    with path.open(newline="", encoding="utf-8") as input_file:
+        reader = csv.DictReader(input_file)
+        expected_fields = [
+            "Section", "Category", "Instruction", "From", "To",
+            "Type", "Class", "Value",
+        ]
+        if reader.fieldnames != expected_fields:
+            raise ValueError(
+                f"unexpected transprecision-sections CSV header in {path}"
+            )
+        for source_row in reader:
+            try:
+                row = {
+                    key: normalize_csv_value(value)
+                    for key, value in source_row.items()
+                }
+                row["Section"] = int(row["Section"])
+                row["Value"] = int(row["Value"])
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"invalid regional counter row in {path}: {source_row}"
+                ) from error
+            rows.append(row)
+    return rows
+
+
+def verify_regional_partition(
+    global_rows: list[dict[str, str | int]],
+    regional_rows: list[dict[str, str | int]],
+) -> None:
+    dimensions = ("Category", "Instruction", "From", "To", "Type", "Class")
+    global_values: dict[tuple[str | int, ...], int] = {}
+    for row in global_rows:
+        if str(row["Category"]).startswith("policy_"):
+            continue
+        key = tuple(row[name] for name in dimensions)
+        global_values[key] = global_values.get(key, 0) + int(row["Value"])
+    regional_values: dict[tuple[str | int, ...], int] = {}
+    for row in regional_rows:
+        key = tuple(row[name] for name in dimensions)
+        regional_values[key] = regional_values.get(key, 0) + int(row["Value"])
+    if global_values != regional_values:
+        missing = sorted(set(global_values) ^ set(regional_values))
+        mismatched = sorted(
+            key for key in set(global_values) & set(regional_values)
+            if global_values[key] != regional_values[key]
+        )
+        raise ValueError(
+            "global transprecision counters do not equal the sum of regions; "
+            f"different keys={missing[:3]}, mismatched keys={mismatched[:3]}"
+        )
 
 
 def select_value(
@@ -98,6 +172,60 @@ def sum_category(
     )
 
 
+def summarize_region(
+    region_id: int,
+    rows: list[dict[str, str | int]],
+) -> dict[str, Any]:
+    effective_rows = [
+        row for row in rows
+        if row["Category"] == "effective_type_by_instruction"
+    ]
+    instructions = sorted({str(row["Instruction"]) for row in effective_rows})
+    return {
+        "id": region_id,
+        "name": REGION_NAMES[region_id],
+        "effective_types": {
+            type_name: sum(
+                int(row["Value"])
+                for row in effective_rows
+                if row["Type"] == type_name
+            )
+            for type_name in EFFECTIVE_TYPES
+        },
+        "effective_type_by_instruction": {
+            instruction: {
+                type_name: sum(
+                    int(row["Value"])
+                    for row in effective_rows
+                    if row["Instruction"] == instruction
+                    and row["Type"] == type_name
+                )
+                for type_name in EFFECTIVE_TYPES
+            }
+            for instruction in instructions
+        },
+        "event_totals": {
+            category: sum_category(rows, category)
+            for category in sorted({str(row["Category"]) for row in rows})
+        },
+        "quantization": {
+            category: {
+                f"{carrier.lower()}-{effective.lower()}": select_value(
+                    rows, category, From=carrier, To=effective
+                )
+                for carrier, effective in QUANTIZATION_PAIRS
+            }
+            for category in (
+                "result_quantization_total_from_to",
+                "result_quantization_changed_from_to",
+                "result_quantization_to_zero_from_to",
+                "result_quantization_overflow_from_to",
+                "result_quantization_underflow_from_to",
+            )
+        },
+    }
+
+
 def extract_run(
     manifest_directory: Path,
     run_entry: dict[str, Any],
@@ -106,7 +234,7 @@ def extract_run(
     if sha256(record_path) != run_entry["sha256"]:
         raise ValueError(f"run-record hash mismatch: {record_path}")
     record = read_json(record_path)
-    if record.get("schema_version") != 3:
+    if record.get("schema_version") != 4:
         raise ValueError(f"unsupported run-record schema in {record_path}")
     if record["id"] != run_entry["id"]:
         raise ValueError(f"run identifier mismatch in {record_path}")
@@ -121,6 +249,22 @@ def extract_run(
     artifact = record["artifacts"]["transprecision"]
     csv_path = run_directory / artifact["path"]
     rows = parse_transprecision_csv(csv_path)
+    regional_artifact = record["artifacts"]["transprecision_sections"]
+    regional_csv_path = run_directory / regional_artifact["path"]
+    regional_rows = parse_transprecision_sections_csv(regional_csv_path)
+    observed_regions = sorted({int(row["Section"]) for row in regional_rows})
+    if observed_regions != list(REGION_NAMES):
+        raise ValueError(
+            f"{record['id']}: expected regions {list(REGION_NAMES)}, "
+            f"observed {observed_regions}"
+        )
+    regions = [
+        summarize_region(
+            region_id,
+            [row for row in regional_rows if row["Section"] == region_id],
+        )
+        for region_id in observed_regions
+    ]
 
     policy_version = select_value(
         rows,
@@ -184,7 +328,6 @@ def extract_run(
         raise ValueError(f"{record['id']}: processed count mismatch")
     if outcome["correct"] + outcome["errors"] != outcome["processed"]:
         raise ValueError(f"{record['id']}: outcome count invariant failed")
-
     diagnostics = {
         "operand_unclassified_total": select_value(
             rows, "operand_unclassified_total"
@@ -317,11 +460,13 @@ def extract_run(
         raise ValueError(
             f"{record['id']}: changed tag reductions exceed total reductions"
         )
+    verify_regional_partition(rows, regional_rows)
     accuracy = outcome["correct"] / outcome["processed"]
     return {
         "id": record["id"],
         "n": record.get("n"),
         "label": record["label"],
+        "mode": record["mode"],
         "protected_bits": expected_policy,
         "outcome": outcome,
         "accuracy": accuracy,
@@ -330,11 +475,14 @@ def extract_run(
         "diagnostics": diagnostics,
         "quantization": quantization,
         "transitions": transitions,
+        "regions": regions,
         "source": {
             "run_record": str(record_path),
             "run_record_sha256": run_entry["sha256"],
             "transprecision_csv": str(csv_path),
             "transprecision_csv_sha256": artifact["sha256"],
+            "transprecision_sections_csv": str(regional_csv_path),
+            "transprecision_sections_csv_sha256": regional_artifact["sha256"],
         },
     }
 
@@ -385,6 +533,23 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
         for run in runs
     ):
         raise ValueError("manifest/run image-count mismatch")
+    if any(run["mode"] != manifest["mode"] for run in runs):
+        raise ValueError("manifest/run mode mismatch")
+    invariants = {
+        "outcome_partition": "passed",
+        "policy_matches_command": "passed",
+        "effective_type_totals_derived_by_instruction": "passed",
+        "unclassified_effective_types_zero": "passed",
+        "unclassified_operands_zero": "passed",
+        "fallback_events_zero": "passed",
+        "invalid_result_promotions_zero": "passed",
+        "quantizations_not_above_operation_results": "passed",
+        "quantization_range_event_invariants": "passed",
+        "changed_tag_reductions_not_above_total": "passed",
+        "effective_boxed_fp32_not_above_external_nan": "passed",
+        "global_transprecision_equals_sum_of_regions": "passed",
+        "expected_network_regions_present": "passed",
+    }
     return {
         "schema_version": schema_version,
         "purpose": manifest["purpose"],
@@ -397,19 +562,7 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
             "sha256": sha256(manifest_path),
         },
         "runs": runs,
-        "invariants": {
-            "outcome_partition": "passed",
-            "policy_matches_command": "passed",
-            "effective_type_totals_derived_by_instruction": "passed",
-            "unclassified_effective_types_zero": "passed",
-            "unclassified_operands_zero": "passed",
-            "fallback_events_zero": "passed",
-            "invalid_result_promotions_zero": "passed",
-            "quantizations_not_above_operation_results": "passed",
-            "quantization_range_event_invariants": "passed",
-            "changed_tag_reductions_not_above_total": "passed",
-            "effective_boxed_fp32_not_above_external_nan": "passed",
-        },
+        "invariants": invariants,
     }
 
 
@@ -505,6 +658,99 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
             )
 
 
+def write_regions_csv(summary: dict[str, Any], path: Path) -> None:
+    fields = [
+        "id", "n", "region_id", "region_name",
+        "effective_e5m2", "effective_fp16", "effective_fp32",
+        "effective_fp64", "effective_unclassified",
+        "operand_promotion_total", "result_quantization_total",
+        "result_quantization_changed", "result_quantization_to_zero",
+        "result_quantization_overflow", "result_quantization_underflow",
+        "result_tag_reduction_total", "result_tag_reduction_changed",
+        "external_write_masked_total", "operation_result_total",
+        "external_write_total",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=fields)
+        writer.writeheader()
+        for run in summary["runs"]:
+            for region in run["regions"]:
+                events = region["event_totals"]
+                quantization = region["quantization"]
+                writer.writerow({
+                    "id": run["id"],
+                    "n": "" if run["n"] is None else run["n"],
+                    "region_id": region["id"],
+                    "region_name": region["name"],
+                    **{
+                        f"effective_{type_name.lower()}": value
+                        for type_name, value in region["effective_types"].items()
+                    },
+                    "operand_promotion_total": events[
+                        "operand_promotion_from_to"
+                    ],
+                    "result_quantization_total": sum(quantization[
+                        "result_quantization_total_from_to"
+                    ].values()),
+                    "result_quantization_changed": sum(quantization[
+                        "result_quantization_changed_from_to"
+                    ].values()),
+                    "result_quantization_to_zero": sum(quantization[
+                        "result_quantization_to_zero_from_to"
+                    ].values()),
+                    "result_quantization_overflow": sum(quantization[
+                        "result_quantization_overflow_from_to"
+                    ].values()),
+                    "result_quantization_underflow": sum(quantization[
+                        "result_quantization_underflow_from_to"
+                    ].values()),
+                    "result_tag_reduction_total": events[
+                        "result_tag_reduction_total_from_to"
+                    ],
+                    "result_tag_reduction_changed": events[
+                        "result_tag_reduction_changed_from_to"
+                    ],
+                    "external_write_masked_total": events[
+                        "external_write_masked_from_to"
+                    ],
+                    "operation_result_total": events[
+                        "operation_result_class_total"
+                    ],
+                    "external_write_total": events[
+                        "external_write_class_total"
+                    ],
+                })
+
+
+def write_regional_instruction_csv(
+    summary: dict[str, Any], path: Path,
+) -> None:
+    fields = [
+        "id", "n", "region_id", "region_name", "instruction", "type",
+        "value",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as output_file:
+        writer = csv.DictWriter(output_file, fieldnames=fields)
+        writer.writeheader()
+        for run in summary["runs"]:
+            for region in run["regions"]:
+                for instruction, types in region[
+                    "effective_type_by_instruction"
+                ].items():
+                    for type_name, value in types.items():
+                        if value == 0:
+                            continue
+                        writer.writerow({
+                            "id": run["id"],
+                            "n": "" if run["n"] is None else run["n"],
+                            "region_id": region["id"],
+                            "region_name": region["name"],
+                            "instruction": instruction,
+                            "type": type_name,
+                            "value": value,
+                        })
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -525,6 +771,11 @@ def main() -> int:
     summary_path = args.output_directory / "summary.json"
     write_json(summary_path, summary)
     write_flat_csv(summary, args.output_directory / "summary.csv")
+    write_regions_csv(summary, args.output_directory / "regions.csv")
+    write_regional_instruction_csv(
+        summary,
+        args.output_directory / "effective-types-by-region-instruction.csv",
+    )
     write_json(
         args.output_directory / "summary-manifest.json",
         {
@@ -535,6 +786,13 @@ def main() -> int:
                 "summary.json": sha256(summary_path),
                 "summary.csv": sha256(
                     args.output_directory / "summary.csv"
+                ),
+                "regions.csv": sha256(
+                    args.output_directory / "regions.csv"
+                ),
+                "effective-types-by-region-instruction.csv": sha256(
+                    args.output_directory
+                    / "effective-types-by-region-instruction.csv"
                 ),
             },
         },

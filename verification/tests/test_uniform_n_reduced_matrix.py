@@ -261,7 +261,7 @@ class UniformNReducedMatrixTest(unittest.TestCase):
                 "purpose": matrix_runner.PURPOSE,
                 "scope": "validation",
                 "image_count": 62,
-                "mode": "direct-logits",
+                "mode": matrix_runner.endpoint_runner.EXPERIMENT_MODE,
                 "type_order": list(matrix_runner.endpoint_runner.TYPE_ORDER),
                 "runs": [
                     {"id": configuration["id"]}
@@ -274,6 +274,7 @@ class UniformNReducedMatrixTest(unittest.TestCase):
                 {
                     "id": configuration["id"],
                     "n": configuration["n"],
+                    "mode": matrix_runner.endpoint_runner.EXPERIMENT_MODE,
                     "protected_bits": configuration["protected_bits"],
                     "outcome": {
                         "processed": 62,

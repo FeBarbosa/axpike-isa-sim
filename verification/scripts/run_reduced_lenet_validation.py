@@ -19,6 +19,7 @@ from typing import Any
 
 
 IMAGE_COUNT = 62
+EXPERIMENT_MODE = "softmax"
 TYPE_ORDER = ("fp64", "fp32", "fp16", "e5m2")
 FULL_PROTECTION_BITS = (50, 21, 8, 0)
 NO_PROTECTION_BITS = (0, 0, 0, 0)
@@ -101,6 +102,11 @@ def parse_outcome(
 
 def find_single_csv(run_directory: Path, stem: str) -> Path:
     matches = sorted(run_directory.glob(f"AxPIKE_{stem}_*.csv"))
+    if stem == "transprecision":
+        matches = [
+            path for path in matches
+            if not path.name.startswith("AxPIKE_transprecision_sections_")
+        ]
     if len(matches) != 1:
         raise ValueError(
             f"expected one AxPIKE {stem} CSV in {run_directory}, "
@@ -138,7 +144,7 @@ def run_configuration(
         policy_argument(configuration.protected_bits),
         proxy_kernel,
         str(application.resolve()),
-        "direct-logits",
+        EXPERIMENT_MODE,
         str(image_count),
     ]
     completed = subprocess.run(
@@ -160,14 +166,19 @@ def run_configuration(
     outcome = parse_outcome(completed.stdout, image_count)
     csv_paths = {
         stem: find_single_csv(run_directory, stem)
-        for stem in ("counters", "energy", "transprecision")
+        for stem in (
+            "counters",
+            "energy",
+            "transprecision",
+            "transprecision_sections",
+        )
     }
     run_record = {
-        "schema_version": 3,
+        "schema_version": 4,
         "id": configuration.identifier,
         "label": configuration.label,
         "image_count": image_count,
-        "mode": "direct-logits",
+        "mode": EXPERIMENT_MODE,
         "protected_bits": protected_bits_mapping(
             configuration.protected_bits
         ),
@@ -179,12 +190,11 @@ def run_configuration(
                 "sha256": sha256(path),
             }
             for name, path in csv_paths.items()
-        }
-        | {
+        } | {
             "application_log": {
                 "path": log_path.name,
                 "sha256": sha256(log_path),
-            }
+            },
         },
     }
     if configuration.n is not None:
@@ -305,7 +315,7 @@ def main() -> int:
         "purpose": "reduced deterministic LeNet validation",
         "scope": "implementation and simulator-model validation only",
         "image_count": IMAGE_COUNT,
-        "mode": "direct-logits",
+        "mode": EXPERIMENT_MODE,
         "type_order": list(TYPE_ORDER),
         "source_revisions": {
             "axpike": git_provenance(

@@ -193,23 +193,47 @@ python3 verification/scripts/plot_reduced_lenet_validation.py \
 ```
 
 The runner intentionally executes only the full-protection and combined
-no-protection endpoints over the deterministic 62-image prefix. This is the
+no-protection endpoints over the deterministic 62-image prefix. The
+experimental application mode includes softmax followed by argmax, emits only
+aggregate outcome counts, and suppresses unrelated
+floating-point progress and reporting work. This is the
 smallest contiguous prefix of the standard MNIST test ordering that contains at
 least one example of every class from 0 through 9. The fixture manifest uses
 schema 2 and records the per-class counts, represented classes, last source
 index, and minimal-prefix invariant. This improves structural class coverage
 without treating the reduced fixture as a statistically representative sample.
-The runner emits
-manifest schema 3 and requires policy `effective-type-quantization-v4`; older
+The runner emits manifest schema 3 with run-record schema 4 and requires policy
+`effective-type-quantization-v4`; older
 artifacts are rejected. The summarizer checks outcome partitioning, policy
 identity, effective-type totals derived from per-instruction rows,
 lower-effective-type quantization bounds, overflow/underflow invariants,
 changed result-tag reductions as a subset of all tag reductions, zero invalid
 result promotions, zero unclassified types/operands, zero fallback events, and
 `fp64_load_nan_boxed_fp32_effective_total <=
-external_write_class_total[NAN]`. Passing these checks supports reduced
+external_write_class_total[NAN]`. It also requires all eight stable network
+regions and checks that every global transprecision counter equals the sum of
+the regional counters. The summary directory includes `regions.csv` for one
+aggregate row per run and region, plus
+`effective-types-by-region-instruction.csv` for the detailed effective-type
+table.
+Passing these checks supports reduced
 implementation and simulator-model validation only; it does not replace the
 10,000-image scientific matrix.
+
+Stable section identifiers need not be visited contiguously. Instruction and
+energy CSVs retain columns from section 0 through the greatest selected
+identifier and report zero for an unvisited identifier. The regional
+transprecision CSV contains the regions actually selected. Consequently, the
+diagnostic `direct-logits` path may omit softmax region 6 while still selecting
+argmax region 7; the principal `softmax` campaign must continue to instantiate
+all eight expected regions.
+
+Run the focused sparse-section counter test with:
+
+```bash
+make -C build axpike_stats_sections-utst
+build/axpike_stats_sections-utst
+```
 
 Run the focused automation tests with:
 

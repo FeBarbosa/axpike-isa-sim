@@ -20,6 +20,8 @@ verification/out/fp64_*
 verification/out/lenet-reduced-validation-*/
 verification/out/mnist-prefix*/
 verification/out/lenet-uniform-n-reduced-matrix-*/
+verification/out/lenet-softmax-*/
+verification/out/lenet-uniform-n-softmax-*/
 verification/out/transprecision-uniform-matrix-*.json
 verification/scripts/__pycache__/
 verification/tests/__pycache__/

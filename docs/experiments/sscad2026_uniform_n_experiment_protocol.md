@@ -91,6 +91,7 @@ All 51 dynamic executions must use the same:
 - AxPIKE executable and source revision;
 - ADF submodule revision and instruction activation;
 - policy name `effective-type-quantization-v4` and version 4;
+- application mode `softmax`, followed by argmax and aggregate outcome counts;
 - simulator options other than the generated protected-bit vector;
 - output schema and extraction scripts; and
 - host execution environment as far as it affects reproducibility.
@@ -103,22 +104,29 @@ process and must write to an isolated output directory.
 ## Experimental Units and Outputs
 
 The primary application unit is one MNIST test image. Every dynamic
-configuration processes the same 10,000 indexed images, allowing predictions
-to be paired by image index.
+configuration processes the same 10,000 images in the standard test-set order.
 
-The primary response is classification accuracy obtained by direct argmax over
-the final logits. Record:
+The primary response is classification accuracy obtained by applying softmax
+to the final logits and then selecting the class by argmax. Softmax is part of
+the evaluated network path because this region is used during training and the
+experiment must characterize its behavior under the same transprecision
+policy. Record:
 
 - correct and incorrect classification counts;
 - accuracy as a percentage;
 - percentage-point difference from the original reference, when that reference
-  has passed the provenance audit;
-- predicted class per image; and
-- the set and count of image-level disagreements with the reference.
+  has passed the provenance audit.
 
-Softmax is outside the primary response because it would introduce an
-additional approximation path. If reported later, it must be a separately
-identified experiment.
+Image-level and class-level disagreement analyses are outside this article's
+scope. The experimental application therefore records aggregate outcomes, not
+individual predictions.
+
+The experimental application mode must execute inference, softmax, and argmax,
+but must suppress floating-point progress, timing, confusion-matrix, and
+evaluation-report calculations. Those auxiliary calculations are not part of
+the network and would otherwise contaminate the simulator instrumentation.
+The legacy direct-logits mode is diagnostic only and is outside the principal
+SSCAD matrix.
 
 The principal simulator responses are:
 
@@ -130,6 +138,18 @@ The principal simulator responses are:
 - total and value-changing result-tag reductions from T to selected lower type
   J; and
 - the invalid-result-promotion invariant, which must remain zero.
+
+Record these responses both globally and by stable network region. Region 0 is
+unscoped work, region 1 is input normalization, regions 2 and 3 are the first
+and second convolution/ReLU/pooling blocks, regions 4 and 5 are FC1 and FC2,
+region 6 is softmax, and region 7 is argmax. Reuse the same identifiers for
+every image. For every counter key, the global value must equal the sum of all
+eight regions.
+
+Regional distributions characterize where effective types and numerical
+events were observed under each global `n`. They do not establish an isolated
+minimum necessary type for a layer, because values and type metadata propagate
+between regions and the same policy is applied throughout the network.
 
 Report raw event totals and normalized rates. Every rate must name its
 denominator. Effective-type shares use all supported effective-type instruction
@@ -154,9 +174,7 @@ changing type parameters differs by regime.
 The primary analysis is descriptive: the complete fixed MNIST test set is
 evaluated rather than sampled. Do not attach a confidence interval that implies
 random sampling unless a separate statistical model and its assumptions are
-defined. Preserve image-level predictions so paired disagreements and classwise
-behavior can be inspected. Classwise accuracy is secondary and should always
-include the number of examples per class.
+defined. Do not infer image-level or classwise behavior from aggregate counts.
 
 Do not claim that a change after `n=21` is caused by FP64 merely because only
 the FP64 protection parameter changes; the workload, propagated metadata, and
@@ -165,7 +183,8 @@ focused association, not an isolated hardware causal claim.
 
 Any non-monotonic point is a valid possible scientific result, not
 automatically an error. First replay it and inspect invariants, neighboring
-points, image-level disagreements, and event counters before interpreting it.
+points, regional event counters, and effective-type distributions before
+interpreting it.
 
 ## Validation Gate
 
@@ -188,6 +207,8 @@ A reduced run is valid only if:
 
 - the process exits successfully;
 - correct plus incorrect outcomes equal 62;
+- all eight stable network regions are present;
+- every global transprecision counter equals the sum of its regional values;
 - the manifest and CSV identify policy version 4 and the intended vector;
 - effective-type totals agree with their per-instruction breakdown;
 - every changed counter is a subset of its corresponding total;
@@ -213,10 +234,16 @@ directories. Replay any point that is non-monotonic relative to its neighbors,
 changes accuracy unexpectedly, produces a new exceptional-value class, or
 violates a zero-expected diagnostic.
 
-For deterministic replay, instruction, energy, transprecision, prediction, and
-summary outputs must be byte-identical after excluding only fields explicitly
+For deterministic replay, instruction, energy, global and regional
+transprecision, and summary outputs must be byte-identical after excluding only fields explicitly
 documented as nondeterministic. A mismatch blocks interpretation until its
 source is identified.
+
+AxPIKE includes the host process identifier in generated CSV filenames and in
+the four application-log lines that announce those filenames. Replay compares
+CSV contents by artifact role rather than PID-bearing basename and excludes
+only those four announcement lines from the application-log comparison. All
+remaining application output must remain byte-identical.
 
 ## Per-Run Record
 
@@ -229,7 +256,7 @@ Each run record must contain:
 - input and model hashes;
 - host and compiler information needed to reproduce the build;
 - processed-image and outcome counts;
-- hashes of raw CSVs, predictions, summaries, and logs; and
+- hashes of raw CSVs, summaries, and logs; and
 - extractor version, invariant results, and any anomaly annotation.
 
 The orchestration must be resumable: a configuration is skipped only when its
