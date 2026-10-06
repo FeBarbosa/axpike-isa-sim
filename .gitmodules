@@ -4,3 +4,7 @@
 [submodule "paper-sscad2026"]
 	path = paper-sscad2026
 	url = git@github.com:FeBarbosa/Exploration-of-transprecision-promotion-polices.git
+[submodule "ACM-PAPER---Partial-Mantissa-bit-Protection"]
+	path = ACM-PAPER---Partial-Mantissa-bit-Protection
+	url = git@github.com:FeBarbosa/ACM-PAPER---Partial-Mantissa-bit-Protection.git
+	branch = main
