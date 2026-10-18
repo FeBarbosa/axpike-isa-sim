@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Freeze the complete standard MNIST files for the SSCAD campaign."""
+"""Freeze the complete standard MNIST files for the complete campaign."""
 
 from __future__ import annotations
 

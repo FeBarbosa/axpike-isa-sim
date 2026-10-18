@@ -32,7 +32,7 @@ class TransprecisionExperimentMatrixTest(unittest.TestCase):
         }
 
     def test_schema_policy_scope_and_expected_counts(self) -> None:
-        self.assertEqual(self.manifest["schema_version"], 3)
+        self.assertEqual(self.manifest["schema_version"], 4)
         self.assertEqual(
             self.manifest["policy"],
             {
@@ -54,7 +54,7 @@ class TransprecisionExperimentMatrixTest(unittest.TestCase):
             },
         )
         self.assertEqual(self.manifest["dynamic_configuration_count"], 51)
-        self.assertEqual(self.manifest["planned_new_execution_count"], 51)
+        self.assertEqual(self.manifest["planned_new_execution_count"], 52)
         self.assertEqual(self.manifest["reference_control_count"], 1)
         self.assertEqual(self.manifest["planned_evaluation_point_count"], 52)
         self.assertEqual(len(self.configurations), 51)
@@ -62,8 +62,12 @@ class TransprecisionExperimentMatrixTest(unittest.TestCase):
             self.manifest["reference_controls"],
             [{
                 "id": "original-fp32-fp64",
-                "source": "historical-artifact",
-                "status": "provenance-pending",
+                "label": "Architectural FP32/FP64 baseline",
+                "source": "current-runtime",
+                "status": "planned",
+                "transprecision_mode": "disabled",
+                "protected_bits": None,
+                "cli_argument": "--transprecision-mode=disabled",
             }],
         )
 
@@ -72,6 +76,7 @@ class TransprecisionExperimentMatrixTest(unittest.TestCase):
         for n, entry in enumerate(self.manifest["configurations"]):
             vector = tuple(entry["protected_bits"].values())
             self.assertEqual(entry["n"], n)
+            self.assertEqual(entry["transprecision_mode"], "enabled")
             self.assertEqual(
                 vector, tuple(min(n, limit) for limit in limits)
             )

@@ -21,19 +21,37 @@ enum class transprecision_type_t : uint8_t
 static const size_t transprecision_type_bucket_count = 5;
 static const size_t transprecision_value_class_bucket_count = 4;
 
+enum class transprecision_mode_t : uint8_t
+{
+  ENABLED = 0,
+  DISABLED = 1,
+};
+
+static inline const char* transprecision_mode_name(transprecision_mode_t mode)
+{
+  return mode == transprecision_mode_t::DISABLED ? "disabled" : "enabled";
+}
+
 struct transprecision_policy_config_t
 {
+  transprecision_mode_t mode;
   uint8_t fp64_protected_bits;
   uint8_t fp32_protected_bits;
   uint8_t fp16_protected_bits;
   uint8_t e5m2_protected_bits;
 
   transprecision_policy_config_t()
-    : fp64_protected_bits(50),
+    : mode(transprecision_mode_t::ENABLED),
+      fp64_protected_bits(50),
       fp32_protected_bits(21),
       fp16_protected_bits(8),
       e5m2_protected_bits(0)
   {
+  }
+
+  bool enabled() const
+  {
+    return mode == transprecision_mode_t::ENABLED;
   }
 };
 

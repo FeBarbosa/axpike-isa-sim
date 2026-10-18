@@ -234,7 +234,8 @@ def extract_run(
     if sha256(record_path) != run_entry["sha256"]:
         raise ValueError(f"run-record hash mismatch: {record_path}")
     record = read_json(record_path)
-    if record.get("schema_version") != 4:
+    record_schema_version = record.get("schema_version")
+    if record_schema_version not in (4, 5):
         raise ValueError(f"unsupported run-record schema in {record_path}")
     if record["id"] != run_entry["id"]:
         raise ValueError(f"run identifier mismatch in {record_path}")
@@ -266,6 +267,20 @@ def extract_run(
         for region_id in observed_regions
     ]
 
+    policy_mode_rows = [row for row in rows if row["Category"] == "policy_mode"]
+    if record_schema_version == 5:
+        if len(policy_mode_rows) != 1:
+            raise ValueError(f"{record['id']}: expected one policy-mode row")
+        observed_mode = str(policy_mode_rows[0]["Type"])
+        expected_mode = record.get("transprecision_mode")
+        if observed_mode != expected_mode:
+            raise ValueError(
+                f"{record['id']}: CSV mode {observed_mode!r} does not match "
+                f"run record {expected_mode!r}"
+            )
+    else:
+        observed_mode = "enabled"
+
     policy_version = select_value(
         rows,
         "policy_version",
@@ -285,21 +300,62 @@ def extract_run(
         for type_name in ("FP64", "FP32", "FP16", "E5M2")
     }
     expected_policy = record["protected_bits"]
-    if observed_policy != expected_policy:
+    if observed_mode == "enabled" and observed_policy != expected_policy:
         raise ValueError(
             f"{record['id']}: CSV policy {observed_policy} does not match "
             f"run record {expected_policy}"
         )
-    if record.get("n") is not None:
-        expected_argument = (
-            "--transprecision-type-protected-bits="
-            + ",".join(
-                f"{name}:{expected_policy[name]}" for name in TYPE_ORDER
+    if observed_mode == "enabled":
+        if expected_policy is None:
+            raise ValueError(f"{record['id']}: enabled mode has no policy vector")
+        if record_schema_version == 5 or record.get("n") is not None:
+            expected_argument = (
+                "--transprecision-type-protected-bits="
+                + ",".join(
+                    f"{name}:{expected_policy[name]}" for name in TYPE_ORDER
+                )
             )
-        )
-        if record.get("command", []).count(expected_argument) != 1:
+            if record.get("command", []).count(expected_argument) != 1:
+                raise ValueError(
+                    f"{record['id']}: command does not contain its policy "
+                    "vector"
+                )
+        if record_schema_version == 5 and record.get("command", []).count(
+            "--transprecision-mode=enabled"
+        ) != 1:
             raise ValueError(
-                f"{record['id']}: command does not contain its policy vector"
+                f"{record['id']}: command does not explicitly enable "
+                "transprecision"
+            )
+    else:
+        if expected_policy is not None:
+            raise ValueError(
+                f"{record['id']}: disabled mode defines protected bits"
+            )
+        if record.get("command", []).count(
+            "--transprecision-mode=disabled"
+        ) != 1 or any(
+            str(argument).startswith(
+                "--transprecision-type-protected-bits="
+            )
+            for argument in record.get("command", [])
+        ):
+            raise ValueError(
+                f"{record['id']}: noncanonical disabled-mode command"
+            )
+        non_policy_rows = [
+            row for row in rows
+            if not str(row["Category"]).startswith("policy_")
+        ]
+        if any(int(row["Value"]) != 0 for row in non_policy_rows):
+            raise ValueError(
+                f"{record['id']}: transprecision counters are nonzero while "
+                "the mechanism is disabled"
+            )
+        if any(int(row["Value"]) != 0 for row in regional_rows):
+            raise ValueError(
+                f"{record['id']}: regional transprecision counters are "
+                "nonzero while the mechanism is disabled"
             )
 
     effective_rows = [
@@ -307,7 +363,7 @@ def extract_run(
         for row in rows
         if row["Category"] == "effective_type_by_instruction"
     ]
-    if not effective_rows:
+    if observed_mode == "enabled" and not effective_rows:
         raise ValueError(
             f"{record['id']}: no effective-type instruction observations"
         )
@@ -467,7 +523,11 @@ def extract_run(
         "n": record.get("n"),
         "label": record["label"],
         "mode": record["mode"],
+        "transprecision_mode": observed_mode,
         "protected_bits": expected_policy,
+        "inactive_protected_bits": (
+            observed_policy if observed_mode == "disabled" else None
+        ),
         "outcome": outcome,
         "accuracy": accuracy,
         "effective_type_observations": effective_observations,
@@ -490,11 +550,13 @@ def extract_run(
 def build_summary(manifest_path: Path) -> dict[str, Any]:
     manifest = read_json(manifest_path)
     schema_version = manifest.get("schema_version")
-    if schema_version not in (3, 4):
+    if schema_version not in (3, 4, 5):
         raise ValueError("unsupported reduced-validation manifest schema")
     purpose = manifest.get("purpose")
     supported_purposes = {
         "reduced deterministic LeNet validation",
+        "reduced deterministic LeNet architectural baseline",
+        "complete MNIST LeNet architectural baseline",
         "uniform-n reduced deterministic LeNet validation",
         "uniform-n complete MNIST LeNet scientific evaluation",
     }
@@ -514,13 +576,33 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
             raise ValueError(
                 "expected full-protection and no-protection runs in that order"
             )
+    elif purpose in {
+        "reduced deterministic LeNet architectural baseline",
+        "complete MNIST LeNet architectural baseline",
+    }:
+        if (
+            len(runs) != 1
+            or runs[0]["id"] != "original-fp32-fp64"
+            or runs[0]["transprecision_mode"] != "disabled"
+        ):
+            raise ValueError("expected one architectural baseline run")
     else:
-        if schema_version != 4:
-            raise ValueError("uniform-n matrix requires manifest schema 4")
-        if len(runs) != 51 or [run["n"] for run in runs] != list(range(51)):
+        if schema_version not in (4, 5):
+            raise ValueError("unsupported uniform-n manifest schema")
+        dynamic_runs = [
+            run for run in runs
+            if run.get("transprecision_mode", "enabled") == "enabled"
+        ]
+        baseline_runs = [
+            run for run in runs
+            if run.get("transprecision_mode", "enabled") == "disabled"
+        ]
+        if len(dynamic_runs) != 51 or [
+            run["n"] for run in dynamic_runs
+        ] != list(range(51)):
             raise ValueError("uniform-n matrix must contain n=0..50")
         limits = (50, 21, 8, 0)
-        for run in runs:
+        for run in dynamic_runs:
             expected = {
                 name: min(run["n"], limit)
                 for name, limit in zip(TYPE_ORDER, limits)
@@ -529,6 +611,17 @@ def build_summary(manifest_path: Path) -> dict[str, Any]:
                 raise ValueError(
                     f"{run['id']}: protected bits do not match uniform n"
                 )
+        if schema_version == 5 and (
+            len(baseline_runs) != 1
+            or baseline_runs[0]["id"] != "original-fp32-fp64"
+            or baseline_runs[0]["n"] is not None
+            or baseline_runs[0]["protected_bits"] is not None
+        ):
+            raise ValueError(
+                "uniform-n matrix must contain one architectural baseline"
+            )
+        if schema_version == 4 and baseline_runs:
+            raise ValueError("legacy uniform-n matrix cannot contain baseline")
     if any(
         run["outcome"]["processed"] != manifest["image_count"]
         for run in runs
@@ -572,6 +665,7 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
         "id",
         "n",
         "label",
+        "transprecision_mode",
         "processed",
         "correct",
         "errors",
@@ -609,6 +703,7 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
                     "id": run["id"],
                     "n": "" if run["n"] is None else run["n"],
                     "label": run["label"],
+                    "transprecision_mode": run["transprecision_mode"],
                     **run["outcome"],
                     "accuracy": f"{run['accuracy']:.12f}",
                     "effective_type_observations":
@@ -661,7 +756,7 @@ def write_flat_csv(summary: dict[str, Any], path: Path) -> None:
 
 def write_regions_csv(summary: dict[str, Any], path: Path) -> None:
     fields = [
-        "id", "n", "region_id", "region_name",
+        "id", "n", "transprecision_mode", "region_id", "region_name",
         "effective_e5m2", "effective_fp16", "effective_fp32",
         "effective_fp64", "effective_unclassified",
         "operand_promotion_total", "result_quantization_total",
@@ -681,6 +776,7 @@ def write_regions_csv(summary: dict[str, Any], path: Path) -> None:
                 writer.writerow({
                     "id": run["id"],
                     "n": "" if run["n"] is None else run["n"],
+                    "transprecision_mode": run["transprecision_mode"],
                     "region_id": region["id"],
                     "region_name": region["name"],
                     **{
@@ -727,8 +823,8 @@ def write_regional_instruction_csv(
     summary: dict[str, Any], path: Path,
 ) -> None:
     fields = [
-        "id", "n", "region_id", "region_name", "instruction", "type",
-        "value",
+        "id", "n", "transprecision_mode", "region_id", "region_name",
+        "instruction", "type", "value",
     ]
     with path.open("w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=fields)
@@ -744,6 +840,9 @@ def write_regional_instruction_csv(
                         writer.writerow({
                             "id": run["id"],
                             "n": "" if run["n"] is None else run["n"],
+                            "transprecision_mode": run[
+                                "transprecision_mode"
+                            ],
                             "region_id": region["id"],
                             "region_name": region["name"],
                             "instruction": instruction,

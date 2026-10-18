@@ -456,6 +456,7 @@ static void expect_invalid_policy_vector(const char* vector)
 static void check_policy_vector_parsing()
 {
   const transprecision_policy_config_t defaults;
+  assert(defaults.mode == transprecision_mode_t::ENABLED);
   assert(defaults.fp64_protected_bits == 50);
   assert(defaults.fp32_protected_bits == 21);
   assert(defaults.fp16_protected_bits == 8);
@@ -480,6 +481,25 @@ static void check_policy_vector_parsing()
   expect_invalid_policy_vector(
       "fp32-e5m2:21,fp32-fp16:13,fp64-e5m2:50,"
       "fp64-fp16:42,fp64-fp32:29");
+}
+
+static void check_policy_mode_parsing()
+{
+  assert(parse_transprecision_mode("enabled")
+      == transprecision_mode_t::ENABLED);
+  assert(parse_transprecision_mode("disabled")
+      == transprecision_mode_t::DISABLED);
+
+  for (const char* invalid : {"", "off", "ENABLED"}) {
+    bool rejected = false;
+    try {
+      (void) parse_transprecision_mode(invalid);
+    }
+    catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    assert(rejected);
+  }
 }
 
 static void check_contextual_fp32(uint32_t bits,
@@ -624,6 +644,7 @@ int main()
   check_operation_result_quantization_integration();
   check_invalid_policy_bounds();
   check_policy_vector_parsing();
+  check_policy_mode_parsing();
 
   const uint32_t fp32_specials[] = {
     UINT32_C(0x00000000), UINT32_C(0x80000000),

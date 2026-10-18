@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the resumable 51-point uniform-n campaign on all 10,000 images."""
+"""Run the resumable uniform-n campaign and baseline on all 10,000 images."""
 
 from __future__ import annotations
 
@@ -72,7 +72,10 @@ def require_reduced_gate(
         gate.get("schema_version") != 1
         or gate.get("status") != "passed"
         or gate.get("configuration_count")
-        != shared_runner.EXPECTED_CONFIGURATION_COUNT
+        != reduced_campaign.get("matrix", {}).get(
+            "configuration_count",
+            shared_runner.EXPECTED_DYNAMIC_CONFIGURATION_COUNT,
+        )
         or gate.get("invariants") != shared_runner.PASSED_INVARIANTS
         or gate.get("campaign_sha256")
         != endpoint_runner.sha256(reduced_campaign_path)
@@ -118,8 +121,9 @@ def require_reduced_gate(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run, resume, and gate all 51 uniform-n configurations on the "
-            "complete 10,000-image MNIST test set."
+            "Run, resume, and gate all uniform-n configurations and the "
+            "architectural baseline on the complete 10,000-image MNIST "
+            "test set."
         )
     )
     parser.add_argument("--matrix", type=Path, required=True)

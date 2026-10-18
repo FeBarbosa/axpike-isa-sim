@@ -42,8 +42,9 @@ AXPIKE_PROVENANCE_EXCLUSIONS = (
 class Configuration:
     identifier: str
     label: str
-    protected_bits: tuple[int, ...]
+    protected_bits: tuple[int, ...] | None
     n: int | None = None
+    transprecision_mode: str = "enabled"
 
 
 CONFIGURATIONS = (
@@ -57,6 +58,13 @@ CONFIGURATIONS = (
         "No-protection endpoint",
         NO_PROTECTION_BITS,
     ),
+)
+
+ARCHITECTURAL_BASELINE = Configuration(
+    "original-fp32-fp64",
+    "Architectural FP32/FP64 baseline",
+    None,
+    transprecision_mode="disabled",
 )
 
 
@@ -80,6 +88,26 @@ def policy_argument(values: tuple[int, ...]) -> str:
         for name, value in zip(TYPE_ORDER, values)
     )
     return f"--transprecision-type-protected-bits={entries}"
+
+
+def transprecision_arguments(configuration: Configuration) -> list[str]:
+    if configuration.transprecision_mode == "disabled":
+        if configuration.protected_bits is not None:
+            raise ValueError(
+                "disabled transprecision configuration cannot define "
+                "protected bits"
+            )
+        return ["--transprecision-mode=disabled"]
+    if configuration.transprecision_mode != "enabled":
+        raise ValueError("transprecision mode must be enabled or disabled")
+    if configuration.protected_bits is None:
+        raise ValueError(
+            "enabled transprecision configuration requires protected bits"
+        )
+    return [
+        "--transprecision-mode=enabled",
+        policy_argument(configuration.protected_bits),
+    ]
 
 
 def parse_outcome(
@@ -148,7 +176,7 @@ def run_configuration(
 
     command = [
         str(axpike.resolve()),
-        policy_argument(configuration.protected_bits),
+        *transprecision_arguments(configuration),
         proxy_kernel,
         str(application.resolve()),
         EXPERIMENT_MODE,
@@ -181,13 +209,16 @@ def run_configuration(
         )
     }
     run_record = {
-        "schema_version": 4,
+        "schema_version": 5,
         "id": configuration.identifier,
         "label": configuration.label,
         "image_count": image_count,
         "mode": EXPERIMENT_MODE,
-        "protected_bits": protected_bits_mapping(
-            configuration.protected_bits
+        "transprecision_mode": configuration.transprecision_mode,
+        "protected_bits": (
+            protected_bits_mapping(configuration.protected_bits)
+            if configuration.protected_bits is not None
+            else None
         ),
         "command": command,
         "outcome": outcome,
@@ -354,6 +385,13 @@ def main() -> int:
     parser.add_argument("--application", type=Path, required=True)
     parser.add_argument("--data-directory", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
+    parser.add_argument(
+        "--architectural-baseline-only",
+        action="store_true",
+        help=(
+            "Run only the FP32/FP64 control with transprecision disabled."
+        ),
+    )
     args = parser.parse_args()
 
     require_file(args.axpike, "AxPIKE executable")
@@ -394,6 +432,11 @@ def main() -> int:
         )
     args.output_directory.mkdir(parents=True)
 
+    selected_configurations = (
+        (ARCHITECTURAL_BASELINE,)
+        if args.architectural_baseline_only
+        else CONFIGURATIONS
+    )
     runs = [
         run_configuration(
             configuration=configuration,
@@ -404,11 +447,15 @@ def main() -> int:
             output_directory=args.output_directory,
             image_count=IMAGE_COUNT,
         )
-        for configuration in CONFIGURATIONS
+        for configuration in selected_configurations
     ]
     manifest = {
-        "schema_version": 3,
-        "purpose": "reduced deterministic LeNet validation",
+        "schema_version": 5,
+        "purpose": (
+            "reduced deterministic LeNet architectural baseline"
+            if args.architectural_baseline_only
+            else "reduced deterministic LeNet validation"
+        ),
         "scope": "implementation and simulator-model validation only",
         "image_count": IMAGE_COUNT,
         "mode": EXPERIMENT_MODE,

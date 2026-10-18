@@ -86,5 +86,6 @@ public:
 
 transprecision_policy_config_t parse_transprecision_policy_config(
     const char* argument);
+transprecision_mode_t parse_transprecision_mode(const char* argument);
 
 #endif

@@ -96,9 +96,11 @@ The matrix has 51 distinct dynamic configurations and requires no alias
 deduplication.
 
 The full-protection endpoint at `n=50` remains a dynamic configuration, not an
-original-execution baseline. The original FP32/FP64 result is recorded as a
-provenance-pending historical reference outside the generated vector matrix.
-Fixed-format FP16 and E5M2 ADF controls are outside the scoped SSCAD experiment.
+original-execution baseline. A separate `original-fp32-fp64` control invokes
+AxPIKE with `--transprecision-mode=disabled`; it has no `n` or protected-bit
+vector and is executed by both matrix runners. Fixed-format FP16 and E5M2 ADF
+controls are outside the scope of the current experiment and must remain
+inactive for this architectural baseline.
 
 Generate the manifest with:
 
@@ -107,9 +109,11 @@ python3 verification/scripts/generate_transprecision_experiment_matrix.py \
   --output verification/out/transprecision-experiment-matrix.json
 ```
 
-The generator validates 51 dynamic configurations, 51 planned new executions,
-one historical reference control, and 52 planned evaluation points. Its
-manifest schema is version 3.
+The generator validates 51 dynamic configurations, one runtime-disabled
+architectural control, 52 planned new executions, and 52 planned evaluation
+points. Its manifest schema is version 4. Dynamic configurations explicitly
+pass `--transprecision-mode=enabled`; the baseline passes only
+`--transprecision-mode=disabled`.
 
 Run its focused tests with:
 
@@ -121,6 +125,18 @@ python3 -m unittest \
 These tests validate matrix construction, policy identity, parameter bounds,
 saturation breakpoints, CLI generation, and reproducibility only. They do not
 execute AxPIKE or establish application-level numerical correctness.
+
+To recover only the reduced architectural baseline without rerunning the two
+dynamic endpoints, use:
+
+```bash
+python3 verification/scripts/run_reduced_lenet_validation.py \
+  --architectural-baseline-only \
+  --axpike build/axpike \
+  --application lenet-riscv-cpp-inference/build/bin/app \
+  --data-directory verification/out/mnist-prefix62-v1 \
+  --output-directory verification/out/lenet-architectural-baseline-reduced-v1
+```
 
 ## Focused Transprecision Validation
 
@@ -247,7 +263,7 @@ python3 -m unittest \
 ```
 
 After the two endpoint checks pass, generate and execute the resumable
-51-configuration reduced matrix with:
+51-configuration reduced matrix plus its architectural baseline with:
 
 ```bash
 python3 verification/scripts/generate_transprecision_experiment_matrix.py \
@@ -269,8 +285,8 @@ identity, policy vector, and invariant gate remain valid. Failed and
 interrupted attempts are preserved. The optional `--max-new-runs` argument can
 bound a session without invalidating later resumption. A complete campaign
 emits `run-manifest.json`, `summary/`, and `matrix-gate.json`; the full
-10,000-image evaluation must not start unless the matrix gate reports all 51
-configurations as passed.
+10,000-image evaluation must not start unless the matrix gate reports all 52
+executions as passed.
 
 The campaign identity also freezes the host/kernel identity, Python runtime,
 host and RISC-V compiler paths and version lines, and hashes of AxPIKE's
@@ -309,13 +325,33 @@ python3 verification/scripts/run_uniform_n_full_matrix.py \
 
 The full fixture manifest validates the standard IDX headers, exact file
 sizes, and hashes of all four MNIST files. The full runner refuses a reduced
-gate unless all 51 configurations and invariants passed and the matrix,
+gate unless all 51 dynamic configurations, the architectural baseline, and
+all invariants passed and the matrix,
 AxPIKE/ADF/application revisions, executable hashes, and proxy-kernel argument
 match. The pilot is the actual `n=0` scientific run. Use its elapsed time and
 artifact size to estimate the remaining campaign before resuming without
 `--max-new-runs`. A complete run uses the same extraction and regional/global
 counter invariants as the reduced gate but has the distinct purpose
 `uniform-n complete MNIST LeNet scientific evaluation`.
+
+To execute only the architectural FP32/FP64 baseline on the complete fixture,
+without repeating the 51 dynamic configurations, first validate and freeze the
+campaign identity without running the application:
+
+```bash
+python3 verification/scripts/run_full_lenet_architectural_baseline.py \
+  --axpike build/axpike \
+  --application lenet-riscv-cpp-inference/build/bin/app \
+  --data-directory verification/out/mnist-full-v1 \
+  --output-directory verification/out/lenet-architectural-baseline-full-v1 \
+  --max-new-runs 0
+```
+
+After reviewing `campaign.json`, resume the same command without
+`--max-new-runs`. The runner executes exactly one configuration with
+`--transprecision-mode=disabled`, no protected-bit vector, and no ADF activation
+argument. It emits `run-manifest.json`, `summary/`, and `baseline-gate.json` and
+requires every global and regional transprecision counter to remain zero.
 
 ## Hook-Only FP16 Lowprecision Test
 

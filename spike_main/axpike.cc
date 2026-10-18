@@ -94,6 +94,8 @@ static void help(int exit_code = 1)
   fprintf(stderr, "  --transprecision-type-protected-bits=<vector>\n");
   fprintf(stderr, "                        Set protected widths by source type as\n");
   fprintf(stderr, "                        fp64:n,fp32:n,fp16:n,e5m2:0\n");
+  fprintf(stderr, "  --transprecision-mode=<enabled|disabled>\n");
+  fprintf(stderr, "                        Enable the policy or use architectural FP behavior\n");
   fprintf(stderr, "  --blocksz=<size>      Cache block size (B) for CMO operations(powers of 2) [default 64]\n");
 
   exit(exit_code);
@@ -446,6 +448,8 @@ int main(int argc, char** argv)
   cfg_arg_t<size_t> nprocs(1);
 
   cfg_t cfg;
+  bool transprecision_mode_option_seen = false;
+  bool transprecision_bits_option_seen = false;
 
   auto const device_parser = [&plugin_device_factories](const char *s) {
     const std::string device_args(s);
@@ -543,10 +547,28 @@ int main(int argc, char** argv)
       [&](const char* s){ std::cerr << "adele-seed: " << s << std::endl; srand(atoi(s));});
   parser.option(0, "adele-activate", 1, adele_activate_parser);
   parser.option(0, "adele-deactivate", 1, adele_deactivate_parser);
+  parser.option(0, "transprecision-mode", 1,
+      [&](const char* s) {
+    if (transprecision_mode_option_seen) {
+      fprintf(stderr, "--transprecision-mode may be specified only once\n");
+      exit(EXIT_FAILURE);
+    }
+    try {
+      cfg.transprecision_policy.mode = parse_transprecision_mode(s);
+      transprecision_mode_option_seen = true;
+    }
+    catch (const std::invalid_argument& error) {
+      fprintf(stderr, "Invalid --transprecision-mode: %s\n", error.what());
+      exit(EXIT_FAILURE);
+    }
+  });
   parser.option(0, "transprecision-type-protected-bits", 1,
       [&](const char* s) {
     try {
-      cfg.transprecision_policy = parse_transprecision_policy_config(s);
+      auto policy = parse_transprecision_policy_config(s);
+      policy.mode = cfg.transprecision_policy.mode;
+      cfg.transprecision_policy = policy;
+      transprecision_bits_option_seen = true;
     }
     catch (const std::invalid_argument& error) {
       fprintf(stderr,
@@ -581,6 +603,13 @@ int main(int argc, char** argv)
   });
 
   auto argv1 = parser.parse(argv);
+  if (!cfg.transprecision_policy.enabled()
+      && transprecision_bits_option_seen) {
+    fprintf(stderr,
+        "--transprecision-mode=disabled cannot be combined with "
+        "--transprecision-type-protected-bits\n");
+    exit(EXIT_FAILURE);
+  }
   std::vector<std::string> htif_args(argv1, (const char*const*)argv + argc);
 
   if (!*argv1)

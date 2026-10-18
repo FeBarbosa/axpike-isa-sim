@@ -33,6 +33,17 @@ const std::array<transprecision_policy_field_t, 4>
 
 } // namespace
 
+transprecision_mode_t parse_transprecision_mode(const char* argument)
+{
+  if (argument == nullptr)
+    throw std::invalid_argument("the mode is empty");
+  if (std::string(argument) == "enabled")
+    return transprecision_mode_t::ENABLED;
+  if (std::string(argument) == "disabled")
+    return transprecision_mode_t::DISABLED;
+  throw std::invalid_argument("the mode must be 'enabled' or 'disabled'");
+}
+
 transprecision_policy_config_t parse_transprecision_policy_config(
     const char* argument)
 {

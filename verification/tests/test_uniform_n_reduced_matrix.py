@@ -35,10 +35,17 @@ class UniformNReducedMatrixTest(unittest.TestCase):
     def test_matrix_contract_accepts_all_points_and_rejects_gaps(self) -> None:
         manifest = matrix_generator.build_manifest()
         configurations = matrix_runner.validate_matrix(manifest)
-        self.assertEqual(len(configurations), 51)
+        self.assertEqual(len(configurations), 52)
         self.assertEqual(
-            [configuration["n"] for configuration in configurations],
+            [configuration["n"] for configuration in configurations[:-1]],
             list(range(51)),
+        )
+        self.assertEqual(
+            configurations[-1],
+            {
+                **manifest["reference_controls"][0],
+                "n": None,
+            },
         )
 
         incomplete = json.loads(json.dumps(manifest))
@@ -118,6 +125,7 @@ class UniformNReducedMatrixTest(unittest.TestCase):
             "configuration": {
                 "n": configuration["n"],
                 "id": configuration["id"],
+                "transprecision_mode": configuration["transprecision_mode"],
                 "protected_bits": configuration["protected_bits"],
             },
             "run": run_entry,
@@ -143,6 +151,9 @@ class UniformNReducedMatrixTest(unittest.TestCase):
                 return {
                     "id": run_entry["id"],
                     "n": configuration["n"],
+                    "transprecision_mode": configuration[
+                        "transprecision_mode"
+                    ],
                     "protected_bits": configuration["protected_bits"],
                 }
 

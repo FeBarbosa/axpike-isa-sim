@@ -500,6 +500,18 @@ class ReducedLenetValidationTest(unittest.TestCase):
             "--transprecision-type-protected-bits="
             "fp64:0,fp32:0,fp16:0,e5m2:0",
         )
+        self.assertEqual(
+            runner.transprecision_arguments(runner.ARCHITECTURAL_BASELINE),
+            ["--transprecision-mode=disabled"],
+        )
+        self.assertEqual(
+            runner.transprecision_arguments(runner.CONFIGURATIONS[0]),
+            [
+                "--transprecision-mode=enabled",
+                "--transprecision-type-protected-bits="
+                "fp64:50,fp32:21,fp16:8,e5m2:0",
+            ],
+        )
         self.assertNotIn("prediction:", "processed: 62\ncorrect: 61\nerrors: 1\n")
 
     def test_regional_csv_requires_expected_schema(self) -> None:

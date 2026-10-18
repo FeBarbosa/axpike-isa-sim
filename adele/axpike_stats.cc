@@ -296,6 +296,9 @@ void AxPIKE::Stats::printTransprecisionCounter(const char* fname) {
 
     fp << "\"Category\",\"Instruction\",\"From\",\"To\",\"Type\",\"Class\",\"Value\""
        << std::endl;
+    fp << "\"policy_mode\",\"\",\"\",\"\",\""
+       << transprecision_mode_name(policy.mode) << "\",\"\",0"
+       << std::endl;
     fp << "\"policy_version\",\"\",\"\",\"\","
        << "\"effective-type-quantization-v4\",\"\",4"
        << std::endl;

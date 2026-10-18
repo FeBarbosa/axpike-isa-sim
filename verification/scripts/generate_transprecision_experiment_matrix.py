@@ -29,12 +29,16 @@ MAXIMUM_UNIFORM_N = 50
 EXPECTED_DYNAMIC_CONFIGURATIONS = 51
 POLICY_NAME = "effective-type-quantization-v4"
 POLICY_VERSION = 4
-MANIFEST_SCHEMA_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 4
 REFERENCE_CONTROLS = (
     {
         "id": "original-fp32-fp64",
-        "source": "historical-artifact",
-        "status": "provenance-pending",
+        "label": "Architectural FP32/FP64 baseline",
+        "source": "current-runtime",
+        "status": "planned",
+        "transprecision_mode": "disabled",
+        "protected_bits": None,
+        "cli_argument": "--transprecision-mode=disabled",
     },
 )
 
@@ -155,6 +159,7 @@ def build_manifest() -> dict[str, Any]:
             {
                 "n": parameterizations[0]["n"],
                 "id": vector_id(vector),
+                "transprecision_mode": "enabled",
                 "protected_bits": protected_bits_mapping(vector),
                 "cli_argument": cli_argument(vector),
                 "parameterizations": parameterizations,
@@ -177,7 +182,7 @@ def build_manifest() -> dict[str, Any]:
             "rule": "effective_n(type)=min(n,maximum_n(type))",
         },
         "dynamic_configuration_count": len(entries),
-        "planned_new_execution_count": len(entries),
+        "planned_new_execution_count": len(entries) + len(REFERENCE_CONTROLS),
         "reference_controls": list(REFERENCE_CONTROLS),
         "reference_control_count": len(REFERENCE_CONTROLS),
         "planned_evaluation_point_count": (

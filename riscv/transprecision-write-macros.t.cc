@@ -495,6 +495,64 @@ static void check_fp64_load_context_macros()
           NAN_BOXED_FP32_CANDIDATE);
 }
 
+static void check_disabled_mode_bypass()
+{
+  reset_macro_context();
+  macro_processor.config.transprecision_policy.mode =
+      transprecision_mode_t::DISABLED;
+  macro_processor.config.transprecision_policy.fp64_protected_bits = 0;
+  macro_processor.config.transprecision_policy.fp32_protected_bits = 0;
+  macro_processor.config.transprecision_policy.fp16_protected_bits = 0;
+
+  macro_state.FPR_TAGS.write(3, transprecision_type_t::FP16);
+  WRITE_FREG_F_ARCHITECTURAL(3, f32(UINT32_C(0x3f800001)));
+  assert(last_write.reg == 3);
+  assert(last_write.bits == UINT32_C(0x3f800001));
+  assert(macro_state.FPR_TAGS.read(3) == transprecision_type_t::FP16);
+
+  int intended_type_evaluations = 0;
+  WRITE_FREG_F_OPERATION_RESULT(4, f32(UINT32_C(0x3f8ccccd)),
+      (intended_type_evaluations++, transprecision_type_t::E5M2));
+  assert(last_write.reg == 4);
+  assert(last_write.bits == UINT32_C(0x3f8ccccd));
+  assert(intended_type_evaluations == 0);
+  assert(macro_state.FPR_TAGS.read(4)
+      == transprecision_type_t::UNCLASSIFIED);
+
+  WRITE_FREG_D_OPERATION_RESULT(5, f64(UINT64_C(0x3ff0000000000001)),
+      (intended_type_evaluations++, transprecision_type_t::E5M2));
+  assert(last_write.reg == 5);
+  assert(last_write.bits == UINT64_C(0x3ff0000000000001));
+  assert(intended_type_evaluations == 0);
+
+  int observation_evaluations = 0;
+  OBSERVE_TRANSPRECISION_EFFECTIVE_TYPE_WITH_OPERANDS(
+      (observation_evaluations++, transprecision_type_t::E5M2),
+      transprecision_type_t::E5M2);
+  assert(observation_evaluations == 0);
+  const auto disabled_effective_type =
+      TRANSPRECISION_EFFECTIVE_TYPE_WITH_OPERANDS(
+          (observation_evaluations++, transprecision_type_t::E5M2),
+          transprecision_type_t::E5M2);
+  assert(disabled_effective_type == transprecision_type_t::UNCLASSIFIED);
+  assert(observation_evaluations == 0);
+  assert(macro_state.last_transprecision_effective_type
+      == transprecision_type_t::UNCLASSIFIED);
+
+  WRITE_FREG_D_LOAD_ARCHITECTURAL(
+      6, f64(UINT64_C(0xffffffff3f800000)));
+  assert(last_write.reg == 6);
+  assert(last_write.bits == UINT64_C(0xffffffff3f800000));
+  assert(macro_state.FPR_FP64_LOAD_BOXING.read(6)
+      == transprecision_fp64_load_boxing_state_t::NONE);
+
+  for (uint64_t count : macro_state.transprecision_counters.write_tag_total)
+    assert(count == 0);
+  assert(macro_state.transprecision_counters.operand_unclassified_total == 0);
+  assert(macro_state.transprecision_counters.lazy_reclassification_total == 0);
+  assert(macro_state.transprecision_counters.unclassified_fallback_total == 0);
+}
+
 int main()
 {
   check_fp32_macro(UINT32_C(0x3f800000), transprecision_type_t::E5M2);
@@ -518,6 +576,7 @@ int main()
   check_rvc_fp64_macro(UINT64_C(0x3ff0000020000000),
       transprecision_type_t::FP32);
   check_fp64_load_context_macros();
+  check_disabled_mode_bypass();
 
   check_fp32_operation_macro(UINT32_C(0x3f800000),
       transprecision_type_t::FP32, UINT32_C(0x3f800000),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and gate the resumable 51-point uniform-n reduced LeNet matrix."""
+"""Run and gate the resumable uniform-n reduced LeNet matrix and baseline."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ import summarize_reduced_lenet_validation as summarizer
 
 
 CAMPAIGN_SCHEMA_VERSION = 2
-RUN_MANIFEST_SCHEMA_VERSION = 4
-MATRIX_SCHEMA_VERSION = 3
-EXPECTED_CONFIGURATION_COUNT = 51
+RUN_MANIFEST_SCHEMA_VERSION = 5
+SUPPORTED_MATRIX_SCHEMA_VERSIONS = (3, 4)
+EXPECTED_DYNAMIC_CONFIGURATION_COUNT = 51
 POLICY_NAME = "effective-type-quantization-v4"
 POLICY_VERSION = 4
 PURPOSE = "uniform-n reduced deterministic LeNet validation"
@@ -58,8 +58,9 @@ def expected_vector(n: int) -> tuple[int, ...]:
 
 
 def validate_matrix(matrix: dict[str, Any]) -> list[dict[str, Any]]:
-    if matrix.get("schema_version") != MATRIX_SCHEMA_VERSION:
-        raise ValueError("uniform-n matrix requires schema version 3")
+    schema_version = matrix.get("schema_version")
+    if schema_version not in SUPPORTED_MATRIX_SCHEMA_VERSIONS:
+        raise ValueError("uniform-n matrix requires schema version 3 or 4")
     if matrix.get("policy") != {
         "name": POLICY_NAME,
         "version": POLICY_VERSION,
@@ -80,10 +81,8 @@ def validate_matrix(matrix: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError("matrix configurations must be a list")
     if (
         matrix.get("dynamic_configuration_count")
-        != EXPECTED_CONFIGURATION_COUNT
-        or matrix.get("planned_new_execution_count")
-        != EXPECTED_CONFIGURATION_COUNT
-        or len(configurations) != EXPECTED_CONFIGURATION_COUNT
+        != EXPECTED_DYNAMIC_CONFIGURATION_COUNT
+        or len(configurations) != EXPECTED_DYNAMIC_CONFIGURATION_COUNT
     ):
         raise ValueError("uniform-n matrix must contain 51 configurations")
 
@@ -99,13 +98,64 @@ def validate_matrix(matrix: dict[str, Any]) -> list[dict[str, Any]]:
             vector
         ):
             raise ValueError(f"n={n}: noncanonical policy argument")
+        if (
+            schema_version == 4
+            and configuration.get("transprecision_mode") != "enabled"
+        ):
+            raise ValueError(f"n={n}: transprecision mode must be enabled")
         identifier = configuration.get("id")
         if not isinstance(identifier, str) or not identifier:
             raise ValueError(f"n={n}: missing configuration identifier")
         if identifier in identifiers:
             raise ValueError(f"n={n}: duplicate configuration identifier")
         identifiers.add(identifier)
-    return configurations
+
+    if schema_version == 3:
+        if matrix.get("planned_new_execution_count") != 51:
+            raise ValueError("legacy uniform-n matrix must plan 51 executions")
+        return configurations
+
+    controls = matrix.get("reference_controls")
+    if not isinstance(controls, list) or len(controls) != 1:
+        raise ValueError("schema-4 matrix requires one reference control")
+    control = controls[0]
+    expected_control = {
+        "id": "original-fp32-fp64",
+        "label": "Architectural FP32/FP64 baseline",
+        "source": "current-runtime",
+        "status": "planned",
+        "transprecision_mode": "disabled",
+        "protected_bits": None,
+        "cli_argument": "--transprecision-mode=disabled",
+    }
+    if control != expected_control:
+        raise ValueError("unexpected architectural baseline definition")
+    if control["id"] in identifiers:
+        raise ValueError("architectural baseline identifier is duplicated")
+    if (
+        matrix.get("reference_control_count") != 1
+        or matrix.get("planned_new_execution_count") != 52
+        or matrix.get("planned_evaluation_point_count") != 52
+    ):
+        raise ValueError("schema-4 matrix must plan 51 policies plus baseline")
+    return [*configurations, {**control, "n": None}]
+
+
+def configuration_directory_name(configuration: dict[str, Any]) -> str:
+    n = configuration.get("n")
+    return f"n-{n:02d}" if n is not None else f"control-{configuration['id']}"
+
+
+def configuration_identity(configuration: dict[str, Any]) -> dict[str, Any]:
+    identity = {
+        "id": configuration["id"],
+        "protected_bits": configuration.get("protected_bits"),
+    }
+    if "transprecision_mode" in configuration:
+        identity["transprecision_mode"] = configuration["transprecision_mode"]
+    if configuration.get("n") is not None:
+        identity["n"] = configuration["n"]
+    return identity
 
 
 def require_fixture(data_directory: Path) -> dict[str, Any]:
@@ -291,9 +341,7 @@ def build_campaign(
         ),
         "configurations": [
             {
-                "n": configuration["n"],
-                "id": configuration["id"],
-                "protected_bits": configuration["protected_bits"],
+                **configuration_identity(configuration),
                 "cli_argument": configuration["cli_argument"],
             }
             for configuration in configurations
@@ -349,17 +397,13 @@ def validate_completion(
     completion_path = (
         output_directory
         / "runs"
-        / f"n-{configuration['n']:02d}"
+        / configuration_directory_name(configuration)
         / "completion.json"
     )
     if not completion_path.exists():
         return None
     completion = read_json(completion_path)
-    expected_identity = {
-        "n": configuration["n"],
-        "id": configuration["id"],
-        "protected_bits": configuration["protected_bits"],
-    }
+    expected_identity = configuration_identity(configuration)
     if (
         completion.get("schema_version") != 1
         or completion.get("status") != "passed"
@@ -375,8 +419,10 @@ def validate_completion(
     extracted = extractor(output_directory, run_entry)
     if (
         extracted["id"] != configuration["id"]
-        or extracted["n"] != configuration["n"]
-        or extracted["protected_bits"] != configuration["protected_bits"]
+        or extracted["n"] != configuration.get("n")
+        or extracted.get("transprecision_mode", "enabled")
+        != configuration.get("transprecision_mode", "enabled")
+        or extracted["protected_bits"] != configuration.get("protected_bits")
     ):
         raise ValueError(f"completed run does not match matrix: {completion_path}")
 
@@ -467,18 +513,29 @@ def run_pending_configurations(
             break
 
         configuration_directory = (
-            output_directory / "runs" / f"n-{configuration['n']:02d}"
+            output_directory / "runs" / configuration_directory_name(
+                configuration
+            )
         )
         attempt_directory = next_attempt_directory(configuration_directory)
-        vector = tuple(
-            configuration["protected_bits"][name]
-            for name in endpoint_runner.TYPE_ORDER
+        protected_bits = configuration.get("protected_bits")
+        vector = (
+            tuple(protected_bits[name] for name in endpoint_runner.TYPE_ORDER)
+            if protected_bits is not None
+            else None
         )
         runtime_configuration = endpoint_runner.Configuration(
             identifier=configuration["id"],
-            label=f"Uniform saturated n={configuration['n']}",
+            label=(
+                f"Uniform saturated n={configuration['n']}"
+                if configuration.get("n") is not None
+                else configuration["label"]
+            ),
             protected_bits=vector,
-            n=configuration["n"],
+            n=configuration.get("n"),
+            transprecision_mode=configuration.get(
+                "transprecision_mode", "enabled"
+            ),
         )
         started_at = datetime.now(timezone.utc).isoformat()
         started_monotonic = time.monotonic()
@@ -501,9 +558,11 @@ def run_pending_configurations(
             extracted = summarizer.extract_run(output_directory, run_entry)
             if (
                 extracted["id"] != configuration["id"]
-                or extracted["n"] != configuration["n"]
+                or extracted["n"] != configuration.get("n")
+                or extracted.get("transprecision_mode", "enabled")
+                != configuration.get("transprecision_mode", "enabled")
                 or extracted["protected_bits"]
-                != configuration["protected_bits"]
+                != configuration.get("protected_bits")
             ):
                 raise ValueError("gated run does not match matrix configuration")
 
@@ -515,11 +574,7 @@ def run_pending_configurations(
                 "schema_version": 1,
                 "status": "passed",
                 "campaign_sha256": campaign_sha256,
-                "configuration": {
-                    "n": configuration["n"],
-                    "id": configuration["id"],
-                    "protected_bits": configuration["protected_bits"],
-                },
+                "configuration": configuration_identity(configuration),
                 "run": run_entry,
                 "execution": execution,
                 "invariants": PASSED_INVARIANTS,
@@ -553,13 +608,13 @@ def run_pending_configurations(
                 ),
             )
             print(
-                f"passed n={configuration['n']} "
+                f"passed {configuration_directory_name(configuration)} "
                 f"({len(completed_entries)}/{len(configurations)})",
                 flush=True,
             )
         except Exception as error:
             failure = {
-                "n": configuration["n"],
+                "n": configuration.get("n"),
                 "id": configuration["id"],
                 "attempt": str(attempt_directory.relative_to(output_directory)),
                 "error_type": type(error).__name__,
@@ -609,7 +664,7 @@ def finalize_campaign(
     campaign_sha256: str,
     run_entries: list[dict[str, Any]],
 ) -> None:
-    if len(run_entries) != EXPECTED_CONFIGURATION_COUNT:
+    if len(run_entries) != len(campaign["configurations"]):
         return
     run_manifest = {
         "schema_version": RUN_MANIFEST_SCHEMA_VERSION,
@@ -675,8 +730,9 @@ def finalize_campaign(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Run, resume, and gate all 51 uniform-n configurations on the "
-            "deterministic 62-image LeNet fixture."
+            "Run, resume, and gate all uniform-n configurations and the "
+            "architectural baseline on the deterministic 62-image LeNet "
+            "fixture."
         )
     )
     parser.add_argument("--matrix", type=Path, required=True)
