@@ -29,3 +29,7 @@ verification/out/lenet-uniform-n-softmax-*/
 verification/out/transprecision-uniform-matrix-*.json
 verification/scripts/__pycache__/
 verification/tests/__pycache__/
+
+# Notebook-local environment and checkpoints
+/verification/notebooks/.venv/
+/verification/notebooks/.ipynb_checkpoints/
