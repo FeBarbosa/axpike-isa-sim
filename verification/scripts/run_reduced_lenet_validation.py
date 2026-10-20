@@ -31,7 +31,7 @@ MNIST_FILES = (
 )
 AXPIKE_PROVENANCE_EXCLUSIONS = (
     (
-        "paper-sscad2026",
+        "ACM-PAPER---Partial-Mantissa-bit-Protection",
         "independently versioned article sources do not affect the "
         "simulator or application executables",
     ),

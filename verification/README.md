@@ -296,9 +296,10 @@ authoritative identities of the binaries actually run.
 
 The campaign identity uses schema 2 and evaluates AxPIKE's dirty-worktree flag
 over the executable provenance scope. The independently versioned
-`paper-sscad2026` article tree is explicitly excluded because it cannot affect
-the simulator or LeNet binaries. This exclusion does not hide its state: the
-manifest records the parent repository's tracked object and status entry, plus
+`ACM-PAPER---Partial-Mantissa-bit-Protection` article tree is explicitly
+excluded because it cannot affect the simulator or LeNet binaries. This
+exclusion does not hide its state: the manifest records the parent repository's
+tracked object and status entry, plus
 the article worktree's observed commit, dirty flag, and status entries. That
 separate snapshot remains part of the immutable campaign record. A change to
 simulator code, automation, build inputs, ADF, or application sources still

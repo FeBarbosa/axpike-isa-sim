@@ -280,8 +280,9 @@ Each run record must contain:
 
 For AxPIKE, dirty-worktree provenance is evaluated over files capable of
 affecting the simulator, experiment automation, or generated executables. The
-independently versioned `paper-sscad2026` article tree is outside that
-executable scope. Its exclusion must be explicit rather than silent: campaign
+independently versioned `ACM-PAPER---Partial-Mantissa-bit-Protection` article
+tree is outside that executable scope. Its exclusion must be explicit rather
+than silent: campaign
 schema 2 records the excluded path and reason, the parent repository's tracked
 object and status entry, and the article worktree's observed commit and dirty
 status entries. These fields preserve the article state for traceability while
