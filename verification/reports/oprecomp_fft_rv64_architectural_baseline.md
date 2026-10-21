@@ -134,6 +134,29 @@ are not committed.
 | Global transprecision counters | `a751d5e03288d5ea23af1ee9de9ca3739bcfc3e1c1531c478c6f036d9ff0b6ea` |
 | Section transprecision counters | `96f5ab3287f023076607743873a0c1b3749f18aeb37fe78a130f3782e87bcf23` |
 
+## Deterministic Replay
+
+The same AxPIKE, proxy-kernel, and RV64 FFT executables were replayed on
+2026-10-21 with the same disabled-mode argument and array length in the
+independent `verification/out/oprecomp-fft-rv64-replay-1` directory.
+
+The replay exited successfully and reproduced the original observable result:
+
+```text
+# array_length: 1000000
+# time_total: 0.509896
+# iterations: 1
+# time_avg: 0.509896
+max diff =2.07473e-15
+Results are correct
+```
+
+The instruction, energy, global transprecision, and section transprecision
+CSVs were byte-identical to the first execution and therefore retained the
+hashes listed above. The replay again contained 74 zero-valued non-policy
+global transprecision rows and 68 zero-valued section rows. This establishes
+deterministic replay for the recorded baseline artifacts and numerical output.
+
 ## Evidence Classification and Remaining Gate
 
 This milestone supports RV64 build portability, integrated execution through
@@ -141,8 +164,8 @@ proxy kernel and AxPIKE, the original basic round-trip check for the selected
 input, and the disabled-mode transprecision zero-counter invariant.
 
 It does not establish enabled transprecision behavior, an independent FFT
-oracle, correct scientific-fixture initialization, deterministic replay,
-performance, energy, RTL behavior, or application-level numerical quality.
+oracle, correct scientific-fixture initialization, performance, energy, RTL
+behavior, or application-level numerical quality.
 
 All application and support instructions currently belong to section 0. Before
 running `n=0`, `n=8`, `n=21`, or `n=50`, the FFT kernel must receive an explicit
