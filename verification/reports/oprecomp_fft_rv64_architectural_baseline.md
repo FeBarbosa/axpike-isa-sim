@@ -117,10 +117,10 @@ This confirms that the selected workload substantially exercises scalar FP64
 instructions. It does not establish coverage of every instruction or
 floating-point value class relevant to the transprecision model.
 
-The global transprecision CSV identified `policy_mode` as `disabled`. All 74
-non-policy rows in the global CSV and all 68 rows in the section CSV had value
-zero. This satisfies the disabled-mode zero-counter invariant for the emitted
-schema.
+The global transprecision CSV identified `policy_mode` as `disabled`. Excluding
+its six policy-metadata rows, all 68 event rows in the global CSV and all 68
+rows in the section CSV had value zero. This satisfies the disabled-mode
+zero-counter invariant for the emitted schema.
 
 ## Generated Artifact Hashes
 
@@ -153,9 +153,71 @@ Results are correct
 
 The instruction, energy, global transprecision, and section transprecision
 CSVs were byte-identical to the first execution and therefore retained the
-hashes listed above. The replay again contained 74 zero-valued non-policy
-global transprecision rows and 68 zero-valued section rows. This establishes
-deterministic replay for the recorded baseline artifacts and numerical output.
+hashes listed above. The replay again contained 68 zero-valued global event
+rows and 68 zero-valued section rows. This establishes deterministic replay
+for the recorded baseline artifacts and numerical output.
+
+## Differential Sanity Check Against Official Spike
+
+On 2026-10-21, the same RV64 FFT executable was run with the same newly built
+official proxy-kernel executable on both a recent official Spike and AxPIKE.
+The simulator ISA and privilege arguments were also held constant. Only AxPIKE
+received its additional `--transprecision-mode=disabled` argument.
+
+| Artifact | Identity |
+| --- | --- |
+| Official Spike source | `6a13e0c53852ddd657f8f60d62b72c7623d194d7` |
+| Official Spike SoftFloat submodule | `32eb3295a3c814c1551f94ebc29eed1dec3cb3b1` |
+| Official Spike executable SHA-256 | `6267d55e51fc5e68963af2a094f0e11f91d8662fcb8a506acb1c3cbbb98f32c1` |
+| Official proxy-kernel source | `9c61d29846d8521d9487a57739330f9682d5b542` |
+| Official proxy-kernel executable SHA-256 | `2546180fafa790fd1b8c9a35b3afa4c68810076c678cda8a966524cdca704199` |
+| AxPIKE executable SHA-256 | `901ad692462f43a78551122385b983b6c79ef25bbe9260d59913ab0785650e2b` |
+| RV64 FFT executable SHA-256 | `415cb82a87645c48b2164f03b222eb23b8a16624e553ddf3082b9b3e418d3f79` |
+
+The executions were equivalent to:
+
+```bash
+<official-spike> \
+  --isa=rv64imafdc_zicntr_zihpm \
+  --priv=msu \
+  <official-pk> \
+  verification/out/oprecomp-fft-rv64/run_fftw \
+  1000000
+
+build/axpike \
+  --isa=rv64imafdc_zicntr_zihpm \
+  --priv=msu \
+  --transprecision-mode=disabled \
+  <official-pk> \
+  verification/out/oprecomp-fft-rv64/run_fftw \
+  1000000
+```
+
+Both processes exited with status zero and produced the same observable
+result:
+
+```text
+# array_length: 1000000
+# time_total: 0.509919
+# iterations: 1
+# time_avg: 0.509919
+max diff =2.07473e-15
+Results are correct
+```
+
+The AxPIKE run also retained 68 zero-valued global transprecision event rows
+and 68 zero-valued section rows. The instruction-counter CSV changed because
+the official proxy kernel differs from the previously used AxPIKE proxy
+kernel; that difference is outside the numerical comparison.
+
+For this executable, input, ISA configuration, and shared proxy kernel, AxPIKE
+therefore agrees with a recent official Spike on the benchmark's observable
+numerical result. This is a differential implementation sanity check. It does
+not prove general AxPIKE correctness, establish bit-for-bit equality of the
+complete architectural state, or validate AxPIKE against the historical Spike
+revision from which it was derived. The different native-host result
+(`1.81799e-15`) remains acceptable under the benchmark threshold and is not, by
+itself, evidence of an AxPIKE defect.
 
 ## Evidence Classification and Remaining Gate
 
